@@ -62,6 +62,14 @@ Additional columns are treated as noise proxies or activity indicators. Column n
 
 Bundled example data are available in the `data/` directory and can be selected directly in the app.
 
+The repository also includes public DACE-derived RV test sets:
+
+- `HD40307_DACE_HARPS03`
+- `GJ436_DACE_HARPS03`
+- `HD189567_DACE_HARPS03`
+
+These are HARPS RV time series fetched with `dace-query` and saved in Agatha's table format. See `data/DACE_TEST_DATA.md` for provenance and `scripts/fetch_dace_test_data.py` for the reproducible download script.
+
 ### Basic app workflow
 
 1. Open the `Choose File` tab.
@@ -101,6 +109,8 @@ R -e "shiny::runApp('.', launch.browser = TRUE)"
 15. Click `Calculate periodograms`.
 
 The app will render the periodogram in the main panel. Peaks with larger Bayes-factor power are candidate periodic signals. The downloaded data can be used to remake publication-style figures outside the app.
+
+To demo with DACE-derived data instead, choose `HD40307_DACE_HARPS03` in `Choose File` and use the same 1D periodogram settings.
 
 ### Demo: command-line run
 
