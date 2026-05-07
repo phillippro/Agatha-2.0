@@ -20,9 +20,99 @@ Install most recent R and R packages from CRAN, for example, [https://cran.r-pro
 
 Then install R packages in the R console using
 
-`install.packages(c('minpack.lm','magicaxis','foreach','doMC','parallel'))`
+```r
+install.packages(c(
+  "shiny",
+  "minpack.lm",
+  "magicaxis",
+  "foreach",
+  "doMC",
+  "ramify"
+))
+```
 
-## 2. Usage
+`parallel` is included with base R and normally does not need to be installed separately.
+
+## 2. Run the Agatha Shiny app
+
+From a terminal, enter the repository directory and start the app:
+
+```sh
+cd /path/to/agatha3
+R -e "shiny::runApp('.', launch.browser = TRUE)"
+```
+
+If you are already in the repository directory, this shorter command is enough:
+
+```sh
+R -e "shiny::runApp('.', launch.browser = TRUE)"
+```
+
+The app opens in a local browser window. If it prints a URL such as `http://127.0.0.1:xxxx`, open that URL manually.
+
+### Input data format
+
+Agatha expects a plain-text table. The first three columns are required:
+
+1. Observation time
+2. Radial velocity or other observable
+3. Measurement uncertainty
+
+Additional columns are treated as noise proxies or activity indicators. Column names are recommended. Uploaded filenames should follow the pattern `star_instrument.ext`, for example `HD210193_PFS.vels`.
+
+Bundled example data are available in the `data/` directory and can be selected directly in the app.
+
+### Basic app workflow
+
+1. Open the `Choose File` tab.
+2. Keep `Upload Type` set to `Select from the list` for bundled demo data, or choose `Upload files` for your own table.
+3. Select one or more data sets.
+4. Click `upload and show data`.
+5. Use the `Scatter Plot` tab to inspect columns and obvious outliers.
+6. Use the `Model Comparison` tab to compare AR, MA, and proxy noise models.
+7. Use the `1D Periodogram` tab to calculate BFP, MLP, or related periodograms.
+8. Use the `2D Periodogram` tab to calculate moving periodograms and check whether a signal is stable in time.
+9. Download plots or data tables from the download buttons shown in each tab.
+
+### Demo: bundled RV data
+
+This demo uses data already included in the repository.
+
+1. Start the app:
+
+```sh
+cd /path/to/agatha3
+R -e "shiny::runApp('.', launch.browser = TRUE)"
+```
+
+2. In `Choose File`, set `Upload Type` to `Select from the list`.
+3. Select `HD210193` and click `upload and show data`.
+4. Open `Scatter Plot`.
+5. Select `HD210193` as the target, choose time for the x-axis and RV for the y-axis, then click `show scatter plot`.
+6. Open `1D Periodogram`.
+7. Select `HD210193` as the data set.
+8. Select `BFP` as the periodogram type.
+9. Use `Circular` as the signal type for a quick first pass.
+10. Set `Number of AR components` to `0`.
+11. Set `Number of MA components` to `1`.
+12. Keep the default period range for a first run.
+13. Set `Oversampling factor` to `0.5` for a faster demo, or `1` for a denser period grid.
+14. Select `RVs` as the observable.
+15. Click `Calculate periodograms`.
+
+The app will render the periodogram in the main panel. Peaks with larger Bayes-factor power are candidate periodic signals. The downloaded data can be used to remake publication-style figures outside the app.
+
+### Demo: command-line run
+
+The repository also includes a command-line workflow. This example runs a BFP search with a Keplerian signal model, two signals, oversampling factor `0.1`, and an MA noise model:
+
+```sh
+Rscript agatha2.R BFP kepler 2 0.1 MA data HD210193_PFS.vels HD103949_PFS.vels
+```
+
+The command writes periodograms, phase plots, fitted parameters, residuals, and tabular plotting data to `results/`.
+
+## 3. Command-line usage
 
 After downloading the source code and entering the `agatha2/` directory, you can run the following commandline in your terminal,
 
@@ -111,7 +201,7 @@ These files provide you plots and relevant data which store the x, y and probabl
 
 >results/HD210193_BFP_MA_periodogram_xxx - periodograms for columns 4,5,... in the data file. These columns store activity indices in the case of RV set. 
 
-## 3. Future developement
+## 4. Future developement
 
 >Develop a R markdown code to visualize the results
 
