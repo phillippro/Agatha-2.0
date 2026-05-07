@@ -1,0 +1,17 @@
+# R session and workspace artifacts
+.Rhistory
+.RData
+.Ruserdata
+
+# Generated Agatha outputs
+results/*
+!results/README.md
+
+# Editor and OS noise
+*~
+\#*\#
+.DS_Store
+
+# Python helper artifacts
+__pycache__/
+*.py[cod]

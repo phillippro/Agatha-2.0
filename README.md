@@ -38,7 +38,7 @@ install.packages(c(
 From a terminal, enter the repository directory and start the app:
 
 ```sh
-cd /path/to/agatha3
+cd /path/to/Agatha-2.0
 R -e "shiny::runApp('.', launch.browser = TRUE)"
 ```
 
@@ -89,7 +89,7 @@ This demo uses data already included in the repository.
 1. Start the app:
 
 ```sh
-cd /path/to/agatha3
+cd /path/to/Agatha-2.0
 R -e "shiny::runApp('.', launch.browser = TRUE)"
 ```
 
@@ -124,7 +124,7 @@ The command writes periodograms, phase plots, fitted parameters, residuals, and 
 
 ## 3. Command-line usage
 
-After downloading the source code and entering the `agatha2/` directory, you can run the following commandline in your terminal,
+After downloading the source code and entering the repository directory, you can run the following command line in your terminal:
 
 `Rscript agatha2.R BFP kepler 2 0.1 MA data HD210193_PFS.vels HD103949_PFS.vels`
 
@@ -211,7 +211,7 @@ These files provide you plots and relevant data which store the x, y and probabl
 
 >results/HD210193_BFP_MA_periodogram_xxx - periodograms for columns 4,5,... in the data file. These columns store activity indices in the case of RV set. 
 
-## 4. Future developement
+## 4. Roadmap
 
 >Develop a R markdown code to visualize the results
 

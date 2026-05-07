@@ -25,7 +25,7 @@ source("periodograms.R")
 source('functions.R',local=TRUE)
 source('mcmc_func.R')
 
-data.files <- list.files(path='data',full.name=FALSE)
+data.files <- list.files(path='data', pattern='\\.(dat|vels|rv)$', full.name=FALSE)
 
 shinyServer(function(input, output, session){
 ####select from list
@@ -69,8 +69,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     if(is.null(input$uptype)) return()
     if(input$uptype=='list'){
         selectizeInput('target','Select data files from the list',
-                  choices=gsub('\\..+','',gsub('_TERRA.+','',list.files('data',
-                                    full.names=FALSE))),multiple=TRUE)
+                  choices=gsub('\\..+','',gsub('_TERRA.+','',data.files)),multiple=TRUE)
     }else if(input$uptype=='upload'){
         fileInput('files', 'Choose files', multiple=TRUE)
 #selectizeInput('Nf','Number of files to upload',choices=1:10,selected=1,multiple=FALSE)
