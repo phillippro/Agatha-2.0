@@ -78,7 +78,7 @@ shinyUI(fluidPage(
                      headerPanel(''),
                      sidebarPanel(
                          uiOutput('per.target'),
-                         helpText("If more than one data set is selected, BFP and MLP fit a shared circular signal with one RV offset per data set."),
+                         helpText("If more than one data sets are selected, only the MLP can be calculated for the combined data. To calculate the periodogram, the data sets are combined after subtracting the best-fit noise components.."),
                          uiOutput('per.type'),
                          helpText("There could be errors in the calculation of the BFP if the data is small (e.g. less than 20 data points) or not well sampled. "),
                          uiOutput('nar'),

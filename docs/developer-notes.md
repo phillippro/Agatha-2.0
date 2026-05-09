@@ -24,3 +24,9 @@ Fourth, get the maximum number of signals to be found, i.e. Nmax.plots, which wi
 
 After getting all parameters, calc.1Dper() will calculate peroidograms and then return data to per1D.data() which will be used by per1D.plot() to generate plots and other data. All these results will be stored in output$per. 
 
+## Current session notes
+
+- A backup of the pre-change root R sources was created at `archive/original-code-ae77674/`.
+- That backup is the rollback reference for the multi-dataset periodogram work.
+- The next implementation target is simultaneous multi-dataset RV analysis using the draft model from section 2.6 of `paper/abfp/bkp/astro_periodogram2.pdf`.
+- The design to carry forward is shared signal parameters plus one RV offset per data set, rather than the current sequential or independent treatment.

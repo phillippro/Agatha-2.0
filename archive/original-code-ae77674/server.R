@@ -121,18 +121,16 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     if(is.null(input$per.target) | is.null(input$per.type)) return()
     if(any(input$per.type=='MLP'|input$per.type=='BFP')){
         lapply(1:Ntarget(), function(i){
-            choices <- if(Ntarget()>1) 0 else 0:10
-            selectizeInput(paste0("Nar",i),paste('Number of AR components for',input$per.target[i]),choices = choices,selected = 0,multiple=FALSE)}
+            selectizeInput(paste0("Nar",i),paste('Number of AR components for',input$per.target[i]),choices = 0:10,selected = 0,multiple=FALSE)}
 	)
         }
     })
 
   output$nma <- renderUI({
     if(is.null(input$per.target) | is.null(input$per.type)) return()
-    if(any(input$per.type=='MLP'|input$per.type=='BFP')){
+    if(input$per.type=='MLP'|input$per.type=='BFP'){
         lapply(1:Ntarget(), function(i){
-            choices <- if(Ntarget()>1) 0 else 0:10
-            selectizeInput(paste0("Nma",i),paste('Number of MA components for',input$per.target[i]),choices = choices,selected = 0,multiple=FALSE)}
+            selectizeInput(paste0("Nma",i),paste('Number of MA components for',input$per.target[i]),choices = 0:10,selected = 0,multiple=FALSE)}
 	)
         }
   })
@@ -162,9 +160,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
 
     output$signal <- renderUI({
         if(is.null(input$per.type)) return()
-        if(!is.null(Ntarget()) && Ntarget()>1){
-            radioButtons("signal.type",'Signal type',c("Circular shared signal"="circular"))
-        }else if(any(input$per.type=='BFP')){
+        if(input$per.type=='BFP'){
             radioButtons("signal.type",'Signal type',c("Circular"="circular","Keplerian"='kepler','Stochastic'='stochastic'))
         }else{
             radioButtons("signal.type",'Signal type',c("Circular"="circular","Keplerian"='kepler'))
@@ -174,9 +170,8 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     output$mcf <- renderUI({
         if(is.null(input$per.type)) return()
 #        if(!is.null(data())){
-        if(any(input$per.type=='BFP')){
-            choices <- if(!is.null(Ntarget()) && Ntarget()>1) 0 else c(0,100,1000,10000,100000,1000000)
-            selectizeInput('Niter','MCMC sample size', choices=choices,selected=0,multiple=FALSE)
+        if(input$per.type=='BFP'){
+            selectizeInput('Niter','MCMC sample size', choices=c(0,100,1000,10000,100000,1000000),selected=0,multiple=FALSE)
         }
     })
 
@@ -198,7 +193,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
         if(is.null(Ntarget())) return()
         if(Ntarget()>1){
             selectInput("per.type",'Periodogram type',
-                        choices=c('BFP','MLP'),selected="BFP",multiple=FALSE)
+                        choices=c('MLP'),selected="MLP",multiple=TRUE)
         }else{
             selectInput("per.type",'Periodogram type',
                         choices=c('BFP','MLP','GLST','BGLS','GLS','LS'),selected="BFP",multiple=TRUE)
@@ -222,7 +217,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     output$Inds <- renderUI({
         if(is.null(input$per.type) | is.null(data()) | is.null(Ntarget()) | is.null(NI.max())) return()
 #        if(all(NI.max()==0)) return()
-        if(!any(input$per.type=='BFP' | input$per.type=='MLP')) return()
+        if(input$per.type!='BFP' & input$per.type!='MLP') return()
         lapply(1:Ntarget(),function(i){
             selectInput(paste0('Inds',i),paste('Noise proxies for',input$per.target[i]),choices = 0:NI.max()[input$per.target[i]],selected = 0,multiple=TRUE)
         })
@@ -674,7 +669,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
 	  vals$Nsig.max <- as.integer(input$Nsig.max)
 	  vals$per.type.seq <- input$per.type.seq
       }
-      if(any(input$per.type=='BFP')){
+      if(input$per.type=='BFP'){
           vals$Niter <- as.numeric(input$Niter)
       }else{
           vals$Niter <- 0

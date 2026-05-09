@@ -95,7 +95,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
     fs <- c()
     pars <- list()
     kk <- 1
-    if(SigType=='stochastic' & any(per.type=='BFP')){
+    if(SigType=='stochastic' & per.type=='BFP'){
         noise.only <- TRUE
     }else{
         noise.only <- FALSE
@@ -128,26 +128,13 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
         }
         per.type <- pars[[i]]$per.type
 #        instrument <- paste(per.target,collapse='-')
-        multi.set <- length(per.target)>1
-        if(multi.set){
+        if(length(per.target)>1){
             instrument <- 'combined'
             subdata <- lapply(1:length(per.target),function(j) data[[per.target[j]]])
-            rows <- lapply(1:length(subdata),function(j){
-                tabj <- subdata[[j]][,1:3,drop=FALSE]
-                cbind(tabj,set.id=per.target[j])
-            })
-            tab.with.id <- do.call(rbind,rows)
-            ord <- sort(as.numeric(tab.with.id[,1]),index.return=TRUE)$ix
-            set.id <- tab.with.id[ord,'set.id']
-            tab <- tab.with.id[ord,1:3,drop=FALSE]
-            tab <- as.data.frame(tab)
-            tab[,1] <- as.numeric(tab[,1])
-            tab[,2] <- as.numeric(tab[,2])
-            tab[,3] <- as.numeric(tab[,3])
-            colnames(tab) <- colnames(data[[per.target[1]]])[1:3]
-            Nma <- 0
-            Nar <- 0
-            Inds <- 0
+            tmp <- combine.data(data=subdata,Ninds=Inds,Nmas=Nmas,Nar=Nars)
+            tab <- tmp$cdata
+            idata <- tmp$idata
+            colnames(tab) <- colnames(data[[1]])[1:3]
         }else{
             instrument <- per.target
             tab <- data[[per.target]]
@@ -219,17 +206,13 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
                     cat('dy=',head(dy),'\n')
                     cat('Nma=',Nma,';Nar=',Nar,';model.type=man;Indices=',Indices, ';ofac=',ofac,';fmin=',frange[1],';fmax=',frange[2],';quantify=',quantify, ';renew=',renew,';noise.only=',noise.only,'\n')
                 }
-                if(multi.set){
-                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE)
-                }else{
-                    rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only)
-                }
+                rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only)
 ###renew: every chi-square minimization start from the initial parameter values
                 ylab <- 'ln(BF)'
                 name <- 'logBF'
             }else if(per.type=='MLP'){
-                if(multi.set){
-                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmin=frange[1],fmax=frange[2])
+                if(length(per.target)>1){
+                    rv.ls <- MLP(t=tab[,1]-min(tab[,1]),y=y,dy=dy,Nma=0,Nar=0,Indices=Indices,ofac=ofac,fmin=frange[1],fmax=frange[2],MLP.type=MLP.type)
                 }else{
                     rv.ls <- MLP(t=tab[,1]-min(tab[,1]),y=y,dy=dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,fmin=frange[1],fmax=frange[2],MLP.type=MLP.type)
                 }
@@ -313,11 +296,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
 	}else{
 	     Pconv <- TRUE
 	}
-        fit.SigType <- SigType
-        if(multi.set & SigType!='circular'){
-            fit.SigType <- 'circular'
-        }
-        fit <- sigfit(per=rv.ls,data=tab,SigType=fit.SigType,basis=basis,Ncores=Ncores,mcf=(mcf & !multi.set),Niter=Niter,Pconv=Pconv)
+        fit <- sigfit(per=rv.ls,data=tab,SigType=SigType,basis=basis,Ncores=Ncores,mcf=mcf,Niter=Niter,Pconv=Pconv)
 ###update the output from periodogram
         rv.ls <- fit$per
 
@@ -754,26 +733,6 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
     if(!any(names(per)=='ysims')) per$ysims <- ysims <- 0
     popt <- per$Popt
     save.data <- FALSE
-    if(isTRUE(per$multi_set)){
-        if(mcf){
-            warning('MCMC refinement is not implemented for multi-set periodograms; using the weighted linear multi-set fit.')
-        }
-        popt <- as.numeric(per$Popt[1])
-        par.opt <- unlist(per$par.opt)
-        ysig0 <- as.numeric(per$ysig)
-        res <- as.numeric(per$res)
-        ysig <- ysig0+res
-        ysim.sig <- as.numeric(par.opt['A']*cos(2*pi/popt*tsim)+par.opt['B']*sin(2*pi/popt*tsim))
-        ysim.all <- ysim.sig
-        ParSig <- c(P=popt,par.opt)
-        per$res.s <- res
-        tsim1 <- tsim%%popt
-        inds <- sort(tsim1,index.return=TRUE)$ix
-        return(list(per=per,t=t%%popt,y=as.numeric(ysig),ey=data[,3],res=as.numeric(res),
-                    ysig0=as.numeric(ysig0),tsim0=tsim,ysim0=ysim.sig,
-                    tsim=tsim1[inds],ysim=ysim.sig[inds],ParSig=ParSig,
-                    par.stat=NULL,popt=popt,mc=c()))
-    }
 #    }else{
         if(SigType=='circular'){
             if(!mcf){

@@ -112,6 +112,18 @@ The app will render the periodogram in the main panel. Peaks with larger Bayes-f
 
 To demo with DACE-derived data instead, choose `HD40307_DACE_HARPS03` in `Choose File` and use the same 1D periodogram settings.
 
+### Demo: multi-set 1D periodogram in the app
+
+The Shiny 1D periodogram can fit multiple selected RV data sets simultaneously. For multiple data sets, `BFP` and `MLP` use a shared circular signal with one fitted RV offset per data set. AR/MA noise, proxy terms, Keplerian refinement, and MCMC refinement remain single-data-set features in this workflow.
+
+1. Start the app.
+2. In `Choose File`, select two or more RV data sets and click `upload and show data`.
+3. Open `1D Periodogram`.
+4. Select the same data sets under `Data sets`.
+5. Choose `BFP` or `MLP`.
+6. Keep `Signal type` as `Circular shared signal`.
+7. Click `Calculate periodograms`.
+
 ### Demo: command-line run
 
 The repository also includes a command-line workflow. This example runs a BFP search with a Keplerian signal model, two signals, oversampling factor `0.1`, and an MA noise model:
@@ -140,7 +152,7 @@ After downloading the source code and entering the repository directory, you can
 
 >The sixth argument `data` is the relative path where the data files are put. If the directory is where the agatha2.R file is located, use `.` instead.
 
->The last arguments provide the data files to be analyzed. Agatha 2.0 only support analysis of one set per target and thus multiple data files would be treated independently. 
+>The last arguments provide the data files to be analyzed. The command-line runner still treats multiple data files independently. Use the Shiny 1D Periodogram tab for simultaneous multi-set BFP/MLP fitting with shared circular signal parameters and one offset per data set.
 
 By running the above commandline, the output would be
 

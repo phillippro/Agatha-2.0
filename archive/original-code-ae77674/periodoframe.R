@@ -1074,105 +1074,6 @@ global.notation <- function(t,y,dy,Nma,Nar,Indices,GP,gp.par){
     return(pars)
 }
 
-multiset_design <- function(t, set.id, omega=NULL, trend=TRUE){
-    set.id <- factor(set.id)
-    offsets <- model.matrix(~ set.id - 1)
-    colnames(offsets) <- paste0('gamma_', make.names(levels(set.id)))
-    design <- offsets
-    if(trend){
-        design <- cbind(design, beta=t)
-    }
-    if(!is.null(omega)){
-        design <- cbind(A=cos(omega*t), B=sin(omega*t), design)
-    }
-    return(design)
-}
-
-multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE){
-    X <- multiset_design(t=t,set.id=set.id,omega=omega,trend=trend)
-    w <- 1/dy^2
-    fit <- lm.wfit(x=X,y=y,w=w)
-    coef <- fit$coefficients
-    coef[is.na(coef)] <- 0
-    yfit <- as.numeric(X%*%coef)
-    res <- y-yfit
-    logL <- sum(-0.5*(res^2/dy^2+log(2*pi*dy^2)))
-    return(list(coef=coef,yfit=yfit,res=res,logL=logL,design=X))
-}
-
-multiset_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA,
-                                 tspan=NULL, sampling='combined', section=1,
-                                 trend=TRUE){
-    unit <- 1
-    t <- (t-min(t))/unit
-    set.id <- factor(set.id)
-    data <- cbind(t,y,dy)
-    if(is.null(tspan)){
-        tspan <- max(t)-min(t)
-    }
-    if(is.na(fmin)){
-        fmin <- 1/(tspan*ofac)
-    }
-    fnyq <- 0.5*length(y)/tspan
-    if(is.null(fmax)){
-        fmax <- fnyq
-    }
-    f <- fsample(fmin,fmax,sampling,section,ofac,unit)
-    omegas <- 2*pi*f
-    base <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend)
-    logLs <- rep(NA,length(omegas))
-    opt.pars <- c()
-    yfits <- matrix(NA,nrow=length(t),ncol=length(omegas))
-    residuals <- matrix(NA,nrow=length(t),ncol=length(omegas))
-    for(kk in 1:length(omegas)){
-        fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=omegas[kk],trend=trend)
-        logLs[kk] <- fit$logL
-        opt.pars <- rbind(opt.pars,fit$coef)
-        yfits[,kk] <- fit$yfit
-        residuals[,kk] <- fit$res
-    }
-    Ndata <- length(t)
-    Nextra <- 2
-    logBF <- logLs-base$logL-Nextra/2*log(Ndata)
-    inds <- sort(logBF,decreasing=TRUE,index.return=TRUE)$ix
-    P <- unit/f
-    Popt <- P[inds[1]]
-    opt.par <- opt.pars[inds[1],]
-    opt.par.top <- opt.pars[inds[1:min(10,length(inds))],,drop=FALSE]
-    omega.opt <- 2*pi/Popt
-    ysig <- as.numeric(opt.par['A']*cos(omega.opt*t)+opt.par['B']*sin(omega.opt*t))
-    yfull <- yfits[,inds[1]]
-    res <- residuals[,inds[1]]
-    ps <- P[inds[1:min(5,length(inds))]]
-    power.opt <- logBF[inds[1:min(5,length(inds))]]
-    df <- list(data=data,set.id=set.id,multi_set=TRUE,Nma=0,Nar=0,NI=0,type='period')
-    return(list(data=data,logBF=logBF,logLs=logLs,llmax=max(logLs),lnbfs=matrix(NA,nrow=length(P),ncol=Ndata),
-                P=P,Popt=Popt,Popts=P[inds[1:min(10,length(inds))]],logBF.opt=logBF[inds[1:min(10,length(inds))]],
-                par.opt=opt.par,opt.par=opt.par.top,res=res,res.nst=res,res.n=res,res.s=y-ysig,
-                res.st=res,res.nt=res,ysig=ysig,yfull=yfull,base.fit=base,pars=opt.pars,df=df,
-                power=logBF,ps=ps,power.opt=power.opt,sig.level=c(-Nextra/2*log(Ndata),0,log(150)),
-                ParLow=rep(NA,length(opt.par)),ParUp=rep(NA,length(opt.par)),LogLike0=base$logL,
-                multi_set=TRUE,set.id=set.id,trend=trend))
-}
-
-BFP.multiset <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA,
-                         tspan=NULL, sampling='combined', section=1, progress=FALSE){
-    multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmax=fmax,fmin=fmin,
-                         tspan=tspan,sampling=sampling,section=section,trend=TRUE)
-}
-
-MLP.multiset <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NULL,
-                         tspan=NULL, sampling='combined', section=1){
-    if(is.null(fmin)){
-        fmin <- NA
-    }
-    out <- multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmax=fmax,fmin=fmin,
-                                tspan=tspan,sampling=sampling,section=section,trend=TRUE)
-    out$power <- out$power-max(out$power)
-    out$logBF <- out$power
-    return(out)
-}
-
 ####Marginalized likelihood periodogram
 MLP <- function(t, y, dy, Nma=0, Nar=0,mar.type='part',sj=0,logtau=NULL,ofac=1,fmax=NULL,fmin=NULL,tspan=NULL,model.type='MA',opt.par=NULL,Indices=NULL,MLP.type='sub',sampling='combined',section=1, GP=FALSE,gp.par=NULL,noise.only=FALSE,Nsamp=5){
 #    save(list=ls(all=TRUE),file='test.Robj')
@@ -2468,3 +2369,4 @@ KeplerFit <- function(per,data,basis='natural'){
     lnBF5 <- DlogLike-2.5*log(nrow(per$data))
     return(list(ParKep=ParKep,ParLow=ParLow,ParUp=ParUp,LogLike=ll,lnBF3=lnBF3,lnBF5=lnBF5,ll0=per$LogLike0,lls=ll,pars=pars,df=df))
 }
+
