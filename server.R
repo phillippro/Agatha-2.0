@@ -79,7 +79,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     output$uptext <- renderUI({
         if(is.null(input$uptype)) return()
         if(input$uptype=='upload'){
-            helpText("The file name should be 'star_instrument.fmt' where 'fmt' could be any plain text format. It is better to name the columns. Otherwise, the app will treat the data as radial velocity data. The first three columns should be observation times, observables (interpreted as RVs here) and measurement uncertainties, while the other columns are noise proxies.")
+            helpText("You can upload one or more plain-text time series files. Filenames should be 'star_instrument.fmt' where 'fmt' can be any plain-text extension. The first columns should be observation time, observable/RV, and optional uncertainty; two-column files get unit uncertainties. Additional columns are treated as noise proxies. After upload, select multiple data sets in the 1D Periodogram tab to fit them simultaneously.")
         }
     })
 
@@ -121,8 +121,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     if(is.null(input$per.target) | is.null(input$per.type)) return()
     if(any(input$per.type=='MLP'|input$per.type=='BFP')){
         lapply(1:Ntarget(), function(i){
-            choices <- if(Ntarget()>1) 0 else 0:10
-            selectizeInput(paste0("Nar",i),paste('Number of AR components for',input$per.target[i]),choices = choices,selected = 0,multiple=FALSE)}
+            selectizeInput(paste0("Nar",i),paste('Number of AR components for',input$per.target[i]),choices = 0:10,selected = 0,multiple=FALSE)}
 	)
         }
     })
@@ -131,8 +130,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     if(is.null(input$per.target) | is.null(input$per.type)) return()
     if(any(input$per.type=='MLP'|input$per.type=='BFP')){
         lapply(1:Ntarget(), function(i){
-            choices <- if(Ntarget()>1) 0 else 0:10
-            selectizeInput(paste0("Nma",i),paste('Number of MA components for',input$per.target[i]),choices = choices,selected = 0,multiple=FALSE)}
+            selectizeInput(paste0("Nma",i),paste('Number of MA components for',input$per.target[i]),choices = 0:10,selected = 0,multiple=FALSE)}
 	)
         }
   })
@@ -157,7 +155,8 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
 
     output$per.target <- renderUI({
         if(is.null(data())) return()
-        selectizeInput("per.target",'Data sets',choices=names(data()),selected=names(data())[1],multiple=TRUE)
+        selected <- if(length(names(data()))>1) names(data()) else names(data())[1]
+        selectizeInput("per.target",'Data sets',choices=names(data()),selected=selected,multiple=TRUE)
     })
 
     output$signal <- renderUI({
@@ -307,10 +306,8 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     if(input$uptype=='list'){
       return(input$target)
     }else if(input$uptype=='upload'){
-        fname <- unlist(lapply(1:length(input$files),function(j){ input$files[j]$name}))
-        f <- gsub('.([[:alpha:]]+)$','',fname)
-        f <- gsub('_TERRA','',f)
-        return(f)
+        if(is.null(input$files) || nrow(input$files)==0) return()
+        return(make.unique(vapply(input$files$name,agatha.dataset.name,character(1)),sep='_'))
     }
   })
 
@@ -323,49 +320,12 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     ins <- instr()
     #input$show
     if(input$uptype=='upload'){
-        if(length(instr())>0){
+        if(!is.null(input$files) && nrow(input$files)>0){
             tmp <- list(NA)
-            df <- rep(tmp,length(input$files[,1]))
-            ns <- c()
-            for(i in 1:length(input$files[,1])){
+            df <- rep(tmp,nrow(input$files))
+            for(i in 1:nrow(input$files)){
                 data.path <- input$files[[i,'datapath']]
-                ns <- c(ns,input$files[[i,'name']])
-                tab <- read.table(data.path,nrows=1)
-                if(class(tab[1,1])!='numeric'){
-                    tab <- read.table(data.path,header=TRUE,check.names=FALSE)
-                }else{
-                    tab <- read.table(data.path)
-                }
-                tab[,1] <- tab[,1]
-                tab[,2] <- tab[,2]-mean(tab[,2])#shift to zero mean
-#                if(ncol(tab)<3) tab <- cbind(tab,error=rep(1,nrow(tab)))
-                inds <- sort(tab[,1],index.return=TRUE)$ix
-                tab <- tab[inds,]
-                if(any(diff(tab[,1])==0)){
-                    ind <- which(diff(tab[,1])==0)
-                    tab <- tab[-ind,]
-                }
-                ind <- c()
-                for(j in 1:ncol(tab)){
-                    if(sd(tab[,j])==0){
-		       tab[,j] <- abs(rnorm(nrow(tab),1,0.01))
-		    }
-                    ind <- c(ind,j)
-                }
-                df[[i]] <- tab[,ind]
-                if(is.null(tab)){
-                    if(ncol(df[[i]])==6 & ins[i]=='HARPS'){
-                        colnames(df[[i]])=c('Time','RV','eRV','BIS','FWHM','S-index')#harps
-                    }else if(ncol(df[[i]])==7 & ins[i]=='KECK'){
-                        colnames(df[[i]])=c('Time','RV','eRV','S-index','H-alpha','Photon Count','ObservationTimes')#new keck
-                    }else if(ncol(df[[i]])==6 & ins[i]=='KECK'){
-                        colnames(df[[i]])=c('Time','RV','eRV','S-index','Photon Count','ObservationTimes')#old keck
-                    }else if(ncol(df[[i]])==3){
-                        colnames(df[[i]])=c('Time','RV','eRV')#other
-                    }else{
-                        colnames(df[[i]])=c('Time','RV','eRV',paste0('proxy',1:(ncol(df[[i]])-3)))#other
-                    }
-                }
+                df[[i]] <- read.agatha.table(data.path,center.rv=FALSE)
             }
             names(df) <- target()
         }
@@ -384,28 +344,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
             if(!file.exists(f0)){
                 f0 <- paste0(dir,target,'.dat')
             }
-            tab <- read.table(f0,nrows=1)
-            if(class(tab[1,1])!='numeric'){
-                tab <- read.table(f0,header=TRUE,check.names=FALSE)
-            }else{
-                tab <- read.table(f0)
-            }
-            tab[,1] <- tab[,1]
-            tab[,2] <- tab[,2]-mean(tab[,2])
-            inds <- sort(tab[,1],index.return=TRUE)$ix
-            tab <- tab[inds,]
-            if(any(diff(tab[,1])==0)){
-                ind <- which(diff(tab[,1])==0)
-                tab <- tab[-ind,]
-            }
-            ind <- c()
-            for(j in 1:ncol(tab)){
-                if(sd(tab[,j])==0){
-                  tab[,j] <- abs(rnorm(nrow(tab),1,0.01))
-	        }
-                ind <- c(ind,j)
-            }
-            df[[i]] <- tab[,ind]
+            df[[i]] <- read.agatha.table(f0,center.rv=FALSE)
         }
     }
     return(df)
@@ -464,16 +403,17 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
 ###variable names dependent on per.target
     ns.1D <- reactive({
         if(is.null(input$per.target)) return()
-        nam <- c()
-        if(length(input$per.target)>0){
-            tar <- input$per.target
+        tar <- input$per.target
+        names.by.target <- lapply(tar,function(target){
+            names <- colnames(data()[[target]])
+            names[-c(1,3)]#e.g. 'Time' and 'eRV' for RV data
+        })
+        if(length(names.by.target)>1){
+            nam <- Reduce(intersect,names.by.target)
+        }else{
+            nam <- names.by.target[[1]]
         }
-        for(i in 1:length(input$per.target)){
-            names <- colnames(data()[[tar[i]]])
-            names <- names[-c(1,3)]#e.g. 'Time' and 'eRV' for RV data
-            names <- c(names,'Window Function')
-            nam <- c(nam,names)
-        }
+        nam <- c(nam,'Window Function')
         return(unique(nam))
     })
 

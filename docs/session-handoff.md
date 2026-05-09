@@ -10,12 +10,13 @@ Implemented in this session:
 
 - Added simultaneous 1D multi-dataset periodograms for `BFP` and `MLP`.
 - The implemented model is a shared circular periodic signal with one RV offset per data set and a shared linear trend.
+- Per-data-set AR/MA order controls are available in the 1D UI and enter the multi-set fit as per-set lag nuisance terms.
 - The previous residual-concatenation path is no longer used for 1D multi-set `BFP`/`MLP`.
 - Added `tests/test_multiset_periodogram.R`.
 
 Remaining engineering targets:
 
-- Extend multi-set support to per-set AR/MA and proxy terms.
+- Extend multi-set support to proxy terms.
 - Add multi-set Keplerian and MCMC refinement.
 - Verify against section 2.6 of `paper/abfp/bkp/astro_periodogram2.pdf` if that paper tree is restored.
 

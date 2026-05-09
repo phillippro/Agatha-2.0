@@ -40,6 +40,63 @@ nrc <- function(Nvar){
     return(c(nrow,ncol))
 }
 
+agatha.dataset.name <- function(filename){
+    name <- basename(filename)
+    name <- sub('\\.[^.]*$','',name)
+    name <- sub('_TERRA.*$','',name)
+    name <- gsub('[^[:alnum:]_.-]+','_',name)
+    if(is.na(name) || name==''){
+        name <- 'dataset'
+    }
+    return(name)
+}
+
+read.agatha.table <- function(path, center.rv=FALSE){
+    first.row <- read.table(path,nrows=1,check.names=FALSE)
+    has.header <- !is.numeric(first.row[1,1])
+    tab <- read.table(path,header=has.header,check.names=FALSE)
+    tab <- as.data.frame(tab)
+    if(ncol(tab)<2){
+        stop('Agatha input tables need at least time and observable columns.',call.=FALSE)
+    }
+    for(j in 1:ncol(tab)){
+        tab[,j] <- as.numeric(tab[,j])
+    }
+    if(ncol(tab)<3){
+        tab$eRV <- rep(1,nrow(tab))
+    }
+    if(center.rv){
+        tab[,2] <- tab[,2]-mean(tab[,2],na.rm=TRUE)
+    }
+    inds <- sort(tab[,1],index.return=TRUE)$ix
+    tab <- tab[inds,,drop=FALSE]
+    duplicate.time <- duplicated(tab[,1])
+    if(any(duplicate.time)){
+        tab <- tab[!duplicate.time,,drop=FALSE]
+    }
+    if(ncol(tab)>3){
+        for(j in 4:ncol(tab)){
+            if(is.na(sd(tab[,j])) || sd(tab[,j])==0){
+                tab[,j] <- abs(rnorm(nrow(tab),1,0.01))
+            }
+        }
+    }
+    if(!has.header || any(grepl('^V[[:digit:]]+$',colnames(tab)[1:min(3,ncol(tab))]))){
+        colnames(tab)[1:3] <- c('Time','RV','eRV')
+        if(ncol(tab)>3){
+            colnames(tab)[4:ncol(tab)] <- paste0('proxy',1:(ncol(tab)-3))
+        }
+    }else{
+        colnames(tab)[1:3] <- c('Time','RV','eRV')
+        if(ncol(tab)>3){
+            blank <- is.na(colnames(tab)[4:ncol(tab)]) | colnames(tab)[4:ncol(tab)]==''
+            colnames(tab)[3+which(blank)] <- paste0('proxy',which(blank))
+        }
+    }
+    rownames(tab) <- NULL
+    return(tab)
+}
+
 tv.per <- function(targets,ofac,data){
     for(target in targets){
         tab <- data[[target]]
@@ -104,7 +161,11 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
     for(j1 in 1:length(vars)){
         for(j2 in 1:length(per.type)){
             if(per.type[j2]=='MLP' | per.type[j2]=='BFP'){
-                pars[[kk]] <- list(var=vars[j1],per.type=per.type[j2],Inds=Inds[[1]],Nma=Nmas[1],Nar=Nars[1])
+                if(length(per.target)>1){
+                    pars[[kk]] <- list(var=vars[j1],per.type=per.type[j2],Inds=0,Nma=Nmas,Nar=Nars)
+                }else{
+                    pars[[kk]] <- list(var=vars[j1],per.type=per.type[j2],Inds=Inds[[1]],Nma=Nmas[1],Nar=Nars[1])
+                }
                 kk <- kk+1
             }else{
                 pars[[kk]] <- list(var=vars[j1],per.type=per.type[j2],Inds=0,Nma=0,Nar=0)
@@ -121,10 +182,11 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
 #    lapply(1:Nvar, function(i){
     for(i in 1:Nvar){
         var <- pars[[i]]$var
+        Nma <- as.integer(pars[[i]]$Nma)
+        Nar <- as.integer(pars[[i]]$Nar)
+        Inds <- pars[[i]]$Inds
         if(length(per.target)==1){
-            Nma <- as.integer(pars[[i]]$Nma)
-            Nar <- as.integer(pars[[i]]$Nar)
-            Inds <- as.integer(pars[[i]]$Inds)
+            Inds <- as.integer(Inds)
         }
         per.type <- pars[[i]]$per.type
 #        instrument <- paste(per.target,collapse='-')
@@ -145,8 +207,6 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
             tab[,2] <- as.numeric(tab[,2])
             tab[,3] <- as.numeric(tab[,3])
             colnames(tab) <- colnames(data[[per.target[1]]])[1:3]
-            Nma <- 0
-            Nar <- 0
             Inds <- 0
         }else{
             instrument <- per.target
@@ -220,7 +280,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
                     cat('Nma=',Nma,';Nar=',Nar,';model.type=man;Indices=',Indices, ';ofac=',ofac,';fmin=',frange[1],';fmax=',frange[2],';quantify=',quantify, ';renew=',renew,';noise.only=',noise.only,'\n')
                 }
                 if(multi.set){
-                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE)
+                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE)
                 }else{
                     rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only)
                 }
@@ -229,7 +289,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
                 name <- 'logBF'
             }else if(per.type=='MLP'){
                 if(multi.set){
-                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmin=frange[1],fmax=frange[2])
+                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2])
                 }else{
                     rv.ls <- MLP(t=tab[,1]-min(tab[,1]),y=y,dy=dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,fmin=frange[1],fmax=frange[2],MLP.type=MLP.type)
                 }

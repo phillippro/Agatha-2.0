@@ -1074,7 +1074,48 @@ global.notation <- function(t,y,dy,Nma,Nar,Indices,GP,gp.par){
     return(pars)
 }
 
-multiset_design <- function(t, set.id, omega=NULL, trend=TRUE){
+multiset_lag_terms <- function(y, set.id, Nar=0, Nma=0, residuals=NULL){
+    set.id <- factor(set.id)
+    levels.id <- levels(set.id)
+    normalize.order <- function(order){
+        order <- as.integer(order)
+        if(length(order)==0){
+            order <- 0
+        }
+        if(length(order)<length(levels.id)){
+            order <- rep(order,length.out=length(levels.id))
+        }
+        order[is.na(order)] <- 0
+        return(order)
+    }
+    Nar <- normalize.order(Nar)
+    Nma <- normalize.order(Nma)
+    terms <- c()
+    add.lags <- function(source, prefix, orders, terms){
+        for(j in 1:length(levels.id)){
+            rows <- which(set.id==levels.id[j])
+            if(orders[j]>0 && length(rows)>1){
+                for(lag in 1:orders[j]){
+                    col <- rep(0,length(y))
+                    if(length(rows)>lag){
+                        col[rows[(lag+1):length(rows)]] <- source[rows[1:(length(rows)-lag)]]
+                    }
+                    terms <- cbind(terms,col)
+                    colnames(terms)[ncol(terms)] <- paste0(prefix,'_',make.names(levels.id[j]),'_lag',lag)
+                }
+            }
+        }
+        return(terms)
+    }
+    terms <- add.lags(y,'ar',Nar,terms)
+    if(is.null(residuals)){
+        residuals <- rep(0,length(y))
+    }
+    terms <- add.lags(residuals,'ma',Nma,terms)
+    return(terms)
+}
+
+multiset_design <- function(t, set.id, omega=NULL, trend=TRUE, lag.terms=NULL){
     set.id <- factor(set.id)
     offsets <- model.matrix(~ set.id - 1)
     colnames(offsets) <- paste0('gamma_', make.names(levels(set.id)))
@@ -1082,14 +1123,18 @@ multiset_design <- function(t, set.id, omega=NULL, trend=TRUE){
     if(trend){
         design <- cbind(design, beta=t)
     }
+    if(!is.null(lag.terms)){
+        design <- cbind(design, lag.terms)
+    }
     if(!is.null(omega)){
         design <- cbind(A=cos(omega*t), B=sin(omega*t), design)
     }
     return(design)
 }
 
-multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE){
-    X <- multiset_design(t=t,set.id=set.id,omega=omega,trend=trend)
+multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE, Nar=0, Nma=0, residuals=NULL){
+    lag.terms <- multiset_lag_terms(y=y,set.id=set.id,Nar=Nar,Nma=Nma,residuals=residuals)
+    X <- multiset_design(t=t,set.id=set.id,omega=omega,trend=trend,lag.terms=lag.terms)
     w <- 1/dy^2
     fit <- lm.wfit(x=X,y=y,w=w)
     coef <- fit$coefficients
@@ -1100,9 +1145,9 @@ multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE){
     return(list(coef=coef,yfit=yfit,res=res,logL=logL,design=X))
 }
 
-multiset_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA,
+multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NA,
                                  tspan=NULL, sampling='combined', section=1,
-                                 trend=TRUE){
+                                 trend=TRUE, max.iter=3){
     unit <- 1
     t <- (t-min(t))/unit
     set.id <- factor(set.id)
@@ -1119,13 +1164,23 @@ multiset_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA,
     }
     f <- fsample(fmin,fmax,sampling,section,ofac,unit)
     omegas <- 2*pi*f
-    base <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend)
+    base <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend,Nar=Nar,Nma=0)
+    if(any(as.integer(Nma)>0)){
+        for(iter in 1:max.iter){
+            base <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend,Nar=Nar,Nma=Nma,residuals=base$res)
+        }
+    }
     logLs <- rep(NA,length(omegas))
     opt.pars <- c()
     yfits <- matrix(NA,nrow=length(t),ncol=length(omegas))
     residuals <- matrix(NA,nrow=length(t),ncol=length(omegas))
     for(kk in 1:length(omegas)){
-        fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=omegas[kk],trend=trend)
+        fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=omegas[kk],trend=trend,Nar=Nar,Nma=Nma,residuals=base$res)
+        if(any(as.integer(Nma)>0)){
+            for(iter in 1:max.iter){
+                fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=omegas[kk],trend=trend,Nar=Nar,Nma=Nma,residuals=fit$res)
+            }
+        }
         logLs[kk] <- fit$logL
         opt.pars <- rbind(opt.pars,fit$coef)
         yfits[,kk] <- fit$yfit
@@ -1145,28 +1200,28 @@ multiset_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA,
     res <- residuals[,inds[1]]
     ps <- P[inds[1:min(5,length(inds))]]
     power.opt <- logBF[inds[1:min(5,length(inds))]]
-    df <- list(data=data,set.id=set.id,multi_set=TRUE,Nma=0,Nar=0,NI=0,type='period')
+    df <- list(data=data,set.id=set.id,multi_set=TRUE,Nma=Nma,Nar=Nar,NI=0,type='period')
     return(list(data=data,logBF=logBF,logLs=logLs,llmax=max(logLs),lnbfs=matrix(NA,nrow=length(P),ncol=Ndata),
                 P=P,Popt=Popt,Popts=P[inds[1:min(10,length(inds))]],logBF.opt=logBF[inds[1:min(10,length(inds))]],
                 par.opt=opt.par,opt.par=opt.par.top,res=res,res.nst=res,res.n=res,res.s=y-ysig,
                 res.st=res,res.nt=res,ysig=ysig,yfull=yfull,base.fit=base,pars=opt.pars,df=df,
                 power=logBF,ps=ps,power.opt=power.opt,sig.level=c(-Nextra/2*log(Ndata),0,log(150)),
                 ParLow=rep(NA,length(opt.par)),ParUp=rep(NA,length(opt.par)),LogLike0=base$logL,
-                multi_set=TRUE,set.id=set.id,trend=trend))
+                multi_set=TRUE,set.id=set.id,trend=trend,Nma=Nma,Nar=Nar))
 }
 
-BFP.multiset <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA,
+BFP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NA,
                          tspan=NULL, sampling='combined', section=1, progress=FALSE){
-    multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmax=fmax,fmin=fmin,
+    multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmax=fmax,fmin=fmin,
                          tspan=tspan,sampling=sampling,section=section,trend=TRUE)
 }
 
-MLP.multiset <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NULL,
+MLP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NULL,
                          tspan=NULL, sampling='combined', section=1){
     if(is.null(fmin)){
         fmin <- NA
     }
-    out <- multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmax=fmax,fmin=fmin,
+    out <- multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmax=fmax,fmin=fmin,
                                 tspan=tspan,sampling=sampling,section=section,trend=TRUE)
     out$power <- out$power-max(out$power)
     out$logBF <- out$power

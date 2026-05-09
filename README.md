@@ -114,7 +114,7 @@ To demo with DACE-derived data instead, choose `HD40307_DACE_HARPS03` in `Choose
 
 ### Demo: multi-set 1D periodogram in the app
 
-The Shiny 1D periodogram can fit multiple selected RV data sets simultaneously. For multiple data sets, `BFP` and `MLP` use a shared circular signal with one fitted RV offset per data set. AR/MA noise, proxy terms, Keplerian refinement, and MCMC refinement remain single-data-set features in this workflow.
+The Shiny 1D periodogram can fit multiple selected RV data sets simultaneously. For multiple data sets, `BFP` and `MLP` use a shared circular signal with one fitted RV offset per data set. The AR/MA controls remain available per data set and are included as per-set lag nuisance terms in the combined fit. Proxy terms, Keplerian refinement, and MCMC refinement remain single-data-set features in this workflow.
 
 1. Start the app.
 2. In `Choose File`, select two or more RV data sets and click `upload and show data`.
