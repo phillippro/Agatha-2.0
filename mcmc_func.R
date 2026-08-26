@@ -1366,31 +1366,97 @@ ptmcmc.cov <- function(cov1,cov.start,frac=0.5){
     return(cov1)
 }
 
-###geometric ladder of tempering parameters; tems[1]=1 is the cold chain
-ptmcmc.ladder <- function(Ntem=8,tem.min=1e-3){
+###default geometric temperature step for a given number of parameters: the
+###table of Vousden, Farr & Mandel 2016 (MNRAS 455, 1919; also used by ptemcee)
+###that gives ~25% swap acceptance for a Gaussian posterior. Only the starting
+###point matters since the ladder is adapted afterwards.
+ptmcmc.tstep <- function(Npar){
+    tab <- c(25.2741,7,4.47502,3.5,3,2.71225,2.49879,2.34226,2.22198,2.12628,
+             2.04807,1.98289,1.92735,1.87947,1.83706,1.79978,1.76671,1.73592,1.70884,1.68404)
+    tab[min(max(Npar,1),length(tab))]
+}
+
+###geometric ladder of tempering parameters; tems[1]=1 is the cold chain.
+###With Ntem=NULL the number of rungs follows from the dimension and tem.min.
+ptmcmc.ladder <- function(Ntem=8,tem.min=1e-3,Npar=NULL){
+    if(is.null(Ntem)){
+        tstep <- ptmcmc.tstep(if(is.null(Npar)) 5 else Npar)
+        Ntem <- ceiling(log(1/tem.min)/log(tstep))+1
+        Ntem <- min(max(Ntem,4),20)
+    }
     if(Ntem<2) return(1)
     tem.min^(seq(0,1,length.out=Ntem))
 }
 
+###choose the hottest temperature from the data: the tempered log-likelihood
+###should vary by order unity over the prior box, so that the hottest replica
+###samples close to the prior and can reach any alias or eccentricity
+ptmcmc.temmin <- function(startvalue,bases,Ndraw=50,tem.floor=1e-6,tem.ceiling=1e-2){
+    ll0 <- posterior(startvalue,tem=1,bases=bases)$loglike
+    lls <- rep(NA,Ndraw)
+    for(i in 1:Ndraw){
+        p <- runif(length(par.min),par.min,par.max)
+        names(p) <- names(startvalue)
+        lls[i] <- posterior(p,tem=1,bases=bases)$loglike
+    }
+    lls <- lls[is.finite(lls)]
+    if(length(lls)<5 || !is.finite(ll0)) return(1e-3)
+    dl <- ll0-median(lls)
+    min(max(1/max(dl,1),tem.floor),tem.ceiling)
+}
+
+###split-chain Gelman-Rubin statistic on the columns of a chain
+ptmcmc.rhat <- function(mcmc,Nsub=5){
+    subchain.len <- floor(nrow(mcmc)/Nsub)
+    if(subchain.len<2 || ncol(mcmc)==0) return(NULL)
+    var.sub <- mean.sub <- array(data=NA,dim=c(Nsub,ncol(mcmc)))
+    meanvar <- mean.all <- var.single.est <- rep(NA,ncol(mcmc))
+    for(j1 in 1:ncol(mcmc)){
+        for(i1 in 1:Nsub){
+            seg <- mcmc[((i1-1)*subchain.len+1):(i1*subchain.len),j1]
+            var.sub[i1,j1] <- var(seg)
+            mean.sub[i1,j1] <- mean(seg)
+        }
+        meanvar[j1] <- mean(var.sub[,j1])
+        mean.all[j1] <- mean(mean.sub[,j1])
+        var.single.est[j1] <- subchain.len/(Nsub-1)*sum((mean.sub[,j1]-mean.all[j1])^2)
+    }
+    var.est <- (subchain.len-1)/subchain.len*meanvar+1/subchain.len*var.single.est
+    Rhat <- sqrt(var.est/meanvar)
+    Rhat[is.na(Rhat)] <- 1
+    Rhat
+}
+
 ###run parallel tempering (replica exchange) MCMC
 run.ptmcmc <- function(startvalue,cov.start,iterations,n0=NULL,verbose=FALSE,bases='natural',
-                       tems=NULL,Ntem=8,tem.min=1e-3,swap.interval=10,nburn=NULL,
-                       sd.ini=0.05,acc.target=0.234){
+                       tems=NULL,Ntem=NULL,tem.min=NULL,swap.interval=10,nburn=NULL,
+                       sd.ini=0.05,acc.target=0.234,adapt.ladder=TRUE,adapt.window=100,
+                       adapt.nu=100,adapt.t0=1000,max.extend=3,Rhat.max=1.1){
 ###Each replica is an adaptive Metropolis chain sampling posterior(.,tem) with its
-###own proposal covariance and its own step size. Every swap.interval iterations
+###own proposal covariance and step size. Every swap.interval iterations
 ###neighbouring replicas propose to exchange states, which lets the cold chain
-###escape the local optimum around the periodogram peak. The hot replicas see a
-###flattened likelihood and therefore roam over the aliases and over eccentricity,
-###and replica exchange carries whatever they find down to the cold chain. Only
-###the cold chain is returned, so the output is a sample of the true posterior.
+###escape the local optimum around the periodogram peak. Only the cold chain is
+###returned, so the output is a sample of the untempered posterior.
+###
+###Automatic settings (Vousden, Farr & Mandel 2016):
+###  tem.min=NULL  hottest temperature chosen from pilot draws over the prior
+###  Ntem=NULL     number of rungs from the dimension and tem.min
+###  adapt.ladder  during burn-in the interior rungs move to equalize the swap
+###                rates of neighbouring pairs (their eq. 12), with a rate that
+###                decays as t0/(t+t0)/nu; the ladder is frozen afterwards
+###  max.extend    if the cold chain has not converged (split Rhat>Rhat.max) after
+###                the requested length, sampling continues in blocks, up to
+###                max.extend times the post-burn-in length
     Npar <- length(startvalue)
-    if(is.null(tems)) tems <- ptmcmc.ladder(Ntem=Ntem,tem.min=tem.min)
+    auto.tem <- is.null(tem.min)
+    if(auto.tem) tem.min <- ptmcmc.temmin(startvalue,bases)
+    if(is.null(tems)) tems <- ptmcmc.ladder(Ntem=Ntem,tem.min=tem.min,Npar=Npar)
     tems <- sort(unique(as.numeric(tems)),decreasing=TRUE)
+    tems0 <- tems
     Nt <- length(tems)
     if(is.null(nburn)) nburn <- floor(iterations/2)
     nburn <- max(0,min(nburn,iterations-1))
-###adapt only after a warm-up: a covariance estimated from a couple of samples
-###collapses the proposal and freezes the replicas
+    nsample <- iterations-nburn
     if(is.null(n0)) n0 <- max(100,floor(iterations/100))
     n0 <- max(2,min(n0,max(2,iterations-1)))
     box <- par.max-par.min
@@ -1407,117 +1473,112 @@ run.ptmcmc <- function(startvalue,cov.start,iterations,n0=NULL,verbose=FALSE,bas
     cov.ini <- diag((sd.ini*box)^2,nrow=Npar)
     if(any(!is.finite(cov.ini))) cov.ini <- cov.start
     cov.adapt <- lapply(1:Nt,function(k) cov.ini)
-###a scale factor per replica, adapted towards the target acceptance rate, so that
-###each temperature finds its own step size whatever the units of the parameters
     lambda <- rep(1,Nt)
     head.store <- lapply(1:Nt,function(k) matrix(NA,nrow=n0,ncol=Npar))
-
-    chain <- array(dim=c(iterations+1,Npar))
-    colnames(chain) <- names(startvalue)
-    logpost <- loglike <- rep(NA,iterations+1)
-    chain[1,] <- par.cur[1,]
-    logpost[1] <- lp.cur[1]+ll.cur[1]
-    loglike[1] <- ll.cur[1]
-
-    naccept <- rep(0,Nt)
-    nnull <- rep(0,Nt)
+    naccept <- nnull <- rep(0,Nt)
     Nswap <- max(1,Nt-1)
     nswap <- nswap.acc <- rep(0,Nswap)
-    for(i in 1:iterations){
-        for(k in 1:Nt){
-            if(i==n0){
-                cov.adapt[[k]] <- covariance.n0(mat=head.store[[k]])
-            }else if(i>n0){
-                cov.adapt[[k]] <- covariance.rep(par.cur[k,],cov.adapt[[k]],mu[k,],i)
-            }
-###bound the shape before applying the step scale: replica exchange moves a
-###state discontinuously, which makes the recursive covariance update blow up,
-###and capping after the scaling would stop lambda from ever shrinking the step
-            cov.adapt[[k]] <- ptmcmc.cov(cov.adapt[[k]],cov.ini)
-            cov.prop <- lambda[k]*cov.adapt[[k]]
-            proposal <- ptmcmc.proposal(par.cur[k,],cov.prop)
-            acc <- 0
-            if(is.null(proposal)) nnull[k] <- nnull[k]+1
-            if(!is.null(proposal)){
-                prop <- posterior(proposal,tem=tems[k],bases=bases)
-                post.cur <- ll.cur[k]*tems[k]+lp.cur[k]
-                if(is.na(prop$post) | is.na(post.cur)){
-                    probab <- 0
+    win.n <- win.acc <- rep(0,Nswap)
+    i <- 0
+
+###advance all replicas by n iterations; returns the cold-chain rows
+    run.block <- function(n,adapt){
+        chain <- array(dim=c(n,Npar))
+        colnames(chain) <- names(startvalue)
+        logpost <- loglike <- rep(NA,n)
+        for(ib in 1:n){
+            i <<- i+1
+            for(k in 1:Nt){
+                if(i==n0){
+                    cov.adapt[[k]] <<- covariance.n0(mat=head.store[[k]])
+                }else if(i>n0){
+                    cov.adapt[[k]] <<- covariance.rep(par.cur[k,],cov.adapt[[k]],mu[k,],i)
+                }
+                cov.adapt[[k]] <<- ptmcmc.cov(cov.adapt[[k]],cov.ini)
+                proposal <- ptmcmc.proposal(par.cur[k,],lambda[k]*cov.adapt[[k]])
+                acc <- 0
+                if(is.null(proposal)){
+                    nnull[k] <<- nnull[k]+1
                 }else{
-                    probab <- exp(prop$post-post.cur)
+                    prop <- posterior(proposal,tem=tems[k],bases=bases)
+                    post.cur <- ll.cur[k]*tems[k]+lp.cur[k]
+                    probab <- if(is.na(prop$post) | is.na(post.cur)) 0 else exp(prop$post-post.cur)
+                    if(runif(1)<probab){
+                        par.cur[k,] <<- proposal
+                        ll.cur[k] <<- prop$loglike
+                        lp.cur[k] <<- prop$logprior
+                        naccept[k] <<- naccept[k]+1
+                        acc <- 1
+                    }
                 }
-                if(runif(1)<probab){
-                    par.cur[k,] <- proposal
-                    ll.cur[k] <- prop$loglike
-                    lp.cur[k] <- prop$logprior
-                    naccept[k] <- naccept[k]+1
-                    acc <- 1
+                gam <- min(0.5,i^(-0.6))
+                lambda[k] <<- min(max(exp(log(lambda[k])+gam*(acc-acc.target)),1e-8),1e4)
+                if(i<=n0) head.store[[k]][i,] <<- par.cur[k,]
+                mu[k,] <<- (mu[k,]*i+par.cur[k,])/(i+1)
+            }
+###replica exchange between neighbouring temperatures; the priors cancel
+            if(Nt>1 & i%%swap.interval==0){
+                for(k in 1:(Nt-1)){
+                    nswap[k] <<- nswap[k]+1
+                    win.n[k] <<- win.n[k]+1
+                    lr <- (tems[k]-tems[k+1])*(ll.cur[k+1]-ll.cur[k])
+                    if(!is.na(lr) && log(runif(1))<lr){
+                        ptmp <- par.cur[k,]; par.cur[k,] <<- par.cur[k+1,]; par.cur[k+1,] <<- ptmp
+                        ltmp <- ll.cur[k]; ll.cur[k] <<- ll.cur[k+1]; ll.cur[k+1] <<- ltmp
+                        rtmp <- lp.cur[k]; lp.cur[k] <<- lp.cur[k+1]; lp.cur[k+1] <<- rtmp
+                        nswap.acc[k] <<- nswap.acc[k]+1
+                        win.acc[k] <<- win.acc[k]+1
+                    }
                 }
             }
-###Robbins-Monro update of the step size
-            gam <- min(0.5,i^(-0.6))
-            lambda[k] <- exp(log(lambda[k])+gam*(acc-acc.target))
-            lambda[k] <- min(max(lambda[k],1e-8),1e4)
-            if(i<=n0) head.store[[k]][i,] <- par.cur[k,]
-            mu[k,] <- (mu[k,]*i+par.cur[k,])/(i+1)
-        }
-###replica exchange between neighbouring temperatures; the priors cancel so the
-###acceptance ratio only depends on the likelihoods and the tempering parameters
-        if(Nt>1 & i%%swap.interval==0){
-            for(k in 1:(Nt-1)){
-                nswap[k] <- nswap[k]+1
-                lr <- (tems[k]-tems[k+1])*(ll.cur[k+1]-ll.cur[k])
-                if(!is.na(lr) && log(runif(1))<lr){
-                    ptmp <- par.cur[k,]
-                    par.cur[k,] <- par.cur[k+1,]
-                    par.cur[k+1,] <- ptmp
-                    ltmp <- ll.cur[k]
-                    ll.cur[k] <- ll.cur[k+1]
-                    ll.cur[k+1] <- ltmp
-                    rtmp <- lp.cur[k]
-                    lp.cur[k] <- lp.cur[k+1]
-                    lp.cur[k+1] <- rtmp
-                    nswap.acc[k] <- nswap.acc[k]+1
+###ladder adaptation (burn-in only): move the interior temperatures T=1/tem so
+###that neighbouring swap rates become equal; S_j=log(T_j-T_{j-1}) is updated by
+###kappa*(A_{j-1}-A_j) with kappa=(1/nu)*t0/(t+t0)
+            if(adapt & Nt>2 & i%%adapt.window==0 & all(win.n>0)){
+                A <- win.acc/win.n
+                Tl <- 1/tems
+                S <- log(diff(Tl))
+                kappa <- (1/adapt.nu)*adapt.t0/(i+adapt.t0)
+                for(j in 2:(Nt-1)){
+                    S[j-1] <- S[j-1]+kappa*(A[j-1]-A[j])*adapt.window
                 }
+                Tnew <- c(1,1+cumsum(exp(S)))
+                Tnew[Nt] <- Tl[Nt]
+###keep the interior rungs below the fixed hottest one
+                if(Tnew[Nt-1]>=0.99*Tl[Nt]){
+                    Tnew[2:(Nt-1)] <- 1+(Tnew[2:(Nt-1)]-1)*(0.99*Tl[Nt]-1)/(Tnew[Nt-1]-1)
+                }
+                tems <<- 1/Tnew
+                win.n <<- win.acc <<- rep(0,Nswap)
+            }
+            chain[ib,] <- par.cur[1,]
+            logpost[ib] <- lp.cur[1]+ll.cur[1]
+            loglike[ib] <- ll.cur[1]
+            if(verbose & (i%%1000==0)){
+                cat('PTMCMC i=',i,'; cold acceptance:',round(100*naccept[1]/i,1),
+                    '%; swap acceptance:',paste(round(100*nswap.acc/pmax(nswap,1)),collapse=','),
+                    '%; max loglike=',round(max(loglike[1:ib],na.rm=TRUE),2),'\n')
             }
         }
-        chain[i+1,] <- par.cur[1,]
-        logpost[i+1] <- lp.cur[1]+ll.cur[1]
-        loglike[i+1] <- ll.cur[1]
-        if(verbose & (i%%1000==0)){
-            cat('PTMCMC i=',i,'/',iterations,'; cold acceptance:',round(100*naccept[1]/i,1),
-                '%; swap acceptance:',paste(round(100*nswap.acc/pmax(nswap,1)),collapse=','),
-                '%; max loglike=',round(max(loglike[1:(i+1)],na.rm=TRUE),2),'\n')
-        }
+        cbind(chain,logpost,loglike)
     }
-    out <- cbind(chain,logpost,loglike)[-(1:(nburn+1)),,drop=FALSE]
-    acceptance <- 100*naccept[1]/iterations
-    swap.rate <- nswap.acc/pmax(nswap,1)
-###split-chain convergence check on the returned cold chain
-    Rhat <- conv <- NULL
-    mcmc <- out[,!grepl('Mo|omega|logpost|loglike',colnames(out)),drop=FALSE]
-    Nsub <- 5
-    subchain.len <- floor(nrow(mcmc)/Nsub)
-    if(subchain.len>1 & ncol(mcmc)>0){
-        var.sub <- mean.sub <- array(data=NA,dim=c(Nsub,ncol(mcmc)))
-        meanvar <- mean.all <- var.single.est <- rep(NA,ncol(mcmc))
-        for(j1 in 1:ncol(mcmc)){
-            for(i1 in 1:Nsub){
-                var.sub[i1,j1] <- var(mcmc[((i1-1)*subchain.len+1):(i1*subchain.len),j1])
-                mean.sub[i1,j1] <- mean(mcmc[((i1-1)*subchain.len+1):(i1*subchain.len),j1])
-            }
-            meanvar[j1] <- mean(var.sub[,j1])
-            mean.all[j1] <- mean(mean.sub[,j1])
-            var.single.est[j1] <- subchain.len/(Nsub-1)*sum((mean.sub[,j1]-mean.all[j1])^2)
-        }
-        var.est <- (subchain.len-1)/subchain.len*meanvar+1/subchain.len*var.single.est
-        Rhat <- sqrt(var.est/meanvar)
-        if(any(is.na(Rhat))) Rhat[is.na(Rhat)] <- 1
-        conv <- !any(Rhat>1.1)
+
+    if(nburn>0) run.block(nburn,adapt=adapt.ladder)
+    out <- run.block(nsample,adapt=FALSE)
+    extended <- 0
+    Rhat <- ptmcmc.rhat(out[,!grepl('Mo|omega|logpost|loglike',colnames(out)),drop=FALSE])
+    conv <- if(is.null(Rhat)) NULL else !any(Rhat>Rhat.max)
+    while(isFALSE(conv) & extended<max.extend){
+        extended <- extended+1
+        if(verbose) cat('PTMCMC not converged (max Rhat=',round(max(Rhat),3),'); extending, block',extended,'\n')
+        out <- rbind(out,run.block(nsample,adapt=FALSE))
+        Rhat <- ptmcmc.rhat(out[,!grepl('Mo|omega|logpost|loglike',colnames(out)),drop=FALSE])
+        conv <- !any(Rhat>Rhat.max)
     }
-    return(list(out=out,Rhat=Rhat,conv=conv,acc=acceptance,tems=tems,
-                swap.rate=swap.rate,acc.all=100*naccept/iterations,
-                null.rate=100*nnull/iterations,lambda=lambda))
+    return(list(out=out,Rhat=Rhat,conv=conv,acc=100*naccept[1]/i,tems=tems,tems.initial=tems0,
+                tem.min=tem.min,auto.tem=auto.tem,Ntem=Nt,extended=extended,iterations=i,
+                swap.rate=nswap.acc/pmax(nswap,1),acc.all=100*naccept/i,
+                null.rate=100*nnull/i,lambda=lambda))
 }
 
 bin.simple <- function(data,Nbin){

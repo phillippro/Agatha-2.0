@@ -24,6 +24,8 @@ Completed in the Keplerian, stochastic and PT-MCMC implementation:
 1. Replaced the sequential adaptive tempering of `hot_chain.R` with parallel tempering
    (`run.ptmcmc`) as the default MCMC, keeping the old path under `mcmc.method`.
 1. Added `tests/test_ptmcmc.R` and extended `tests/test_multiset_periodogram.R`.
+1. Made the PT ladder automatic (Vousden et al. 2016): `tem.min` from pilot prior draws,
+   rung count from the dimension, rungs adapted during burn-in, convergence-driven extension.
 
 Completed in the Fourier/harmonic implementation (Delisle et al. 2016):
 

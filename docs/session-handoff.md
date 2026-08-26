@@ -22,6 +22,8 @@ Implemented in the following session:
 - `sigfit.multiset()` dispatches circular/Keplerian/stochastic for multi-set periodograms.
 - Parallel-tempering MCMC (`run.ptmcmc` in `mcmc_func.R`) is now the default sampler used to
   constrain periodogram signals; `hot_chain.R` is kept behind `mcmc.method`.
+- The PT ladder is automatic: `tem.min` from pilot draws over the prior, rung count from the
+  dimension, Vousden et al. 2016 adaptation during burn-in, extension until split `Rhat<1.1`.
 - Two latent bugs fixed on the way: `multiset_design()` used `model.matrix()` and failed for a
   single data set, and `KeplerFit.multiset` has to read `per$df$data` because `sigfit()`
   overwrites `per$data` with the unshifted input table.

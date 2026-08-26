@@ -568,7 +568,7 @@ par.m2a <- function(par.old){
 
 #mcfit <- function(startvalue,Niter,Ncores=1){
 mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSig=NULL,Pconv=FALSE,Ncores=4,
-                  mcmc.method='PT',Ntem=8,tem.min=1e-3,swap.interval=10,mcmc.verbose=FALSE){
+                  mcmc.method='PT',Ntem=NULL,tem.min=NULL,swap.interval=10,mcmc.verbose=FALSE){
 ###get initial parameters from agatha
 #    break()
     time.unit <- 365.25
@@ -682,13 +682,18 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
     mcmc <- foreach(ncore=1:Ncores,.errorhandling = 'pass') %dopar% {
         if(mcmc.method=='PT'){
 ###parallel tempering: the hot replicas explore the aliases of the periodogram
-###peak and hand good states to the cold chain through replica exchange, so no
-###separate adaptive-tempering burn-in is needed
+###peak and hand good states to the cold chain through replica exchange. With
+###Ntem=NULL and tem.min=NULL the ladder is chosen from the data and adapted
+###during burn-in, and the chain is extended until the cold chain converges
             tmp <- run.ptmcmc(startvalue,cov.start,iterations=max(as.numeric(Niter),1000),
                               bases=rep(basis,10),Ntem=Ntem,tem.min=tem.min,
                               swap.interval=swap.interval,verbose=mcmc.verbose)
             if(mcmc.verbose){
-                cat('PTMCMC tems:',paste(format(tmp$tems,digit=2),collapse=','),'\n')
+                cat('PTMCMC tem.min:',format(tmp$tem.min,digit=2),if(tmp$auto.tem) '(automatic)' else '(fixed)',
+                    '; rungs:',tmp$Ntem,'; iterations:',tmp$iterations,'; extended:',tmp$extended,'blocks\n')
+                cat('PTMCMC initial ladder:',paste(format(tmp$tems.initial,digit=2),collapse=','),'\n')
+                cat('PTMCMC adapted ladder:',paste(format(tmp$tems,digit=2),collapse=','),'\n')
+                cat('PTMCMC max Rhat:',if(is.null(tmp$Rhat)) NA else round(max(tmp$Rhat),3),'\n')
                 cat('PTMCMC per-replica acceptance (%):',paste(round(tmp$acc.all,1),collapse=','),'\n')
                 cat('PTMCMC swap acceptance (%):',paste(round(100*tmp$swap.rate,1),collapse=','),'\n')
                 cat('PTMCMC out-of-bound proposals (%):',paste(round(tmp$null.rate,1),collapse=','),'\n')
@@ -864,7 +869,7 @@ sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE){
 }
 
 sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4,Niter=1e3,Pconv=FALSE,res.type='sig',
-                   mcmc.method='PT',Ntem=8,tem.min=1e-3,swap.interval=10,mcmc.verbose=FALSE){
+                   mcmc.method='PT',Ntem=NULL,tem.min=NULL,swap.interval=10,mcmc.verbose=FALSE){
 ###This function is to modify the output of various periodograms to give residual, model prediction, and optimal parameters as well as posterior/likelihood samples
     ##x is a list
     ##SigType is either circular or kepler

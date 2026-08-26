@@ -274,14 +274,30 @@ the cold chain. Only the cold chain is returned, so the reported posterior is th
 one. Each replica adapts both its proposal covariance and a step-size scale towards a 23 per
 cent acceptance rate, so no per-parameter tuning is required.
 
+The ladder is set automatically, following Vousden, Farr & Mandel (2016, MNRAS 455, 1919):
+
+- the hottest temperature `tem.min` is chosen from pilot draws over the prior box so that the
+  tempered log-likelihood varies by order unity across the prior (the hottest replica then
+  samples close to the prior and can reach any alias or eccentricity);
+- the number of rungs follows from the dimension of the problem and `tem.min`, using the
+  geometric spacing of their Table 1;
+- during burn-in the interior rungs move so that neighbouring swap rates become equal (their
+  eq. 12, with a rate decaying as `t0/(t+t0)`), and the ladder is frozen for the sampling
+  phase so the cold chain is a valid stationary sample;
+- if the cold chain has not converged after the requested length (split Gelman-Rubin
+  `Rhat > 1.1`), sampling continues in blocks of the same length, up to three extra blocks.
+
 The behaviour is controlled by the arguments of `mcfit()` and `sigfit()`:
 
 - `mcmc.method` - `'PT'` (default) for parallel tempering, or anything else to fall back to
   the older sequential adaptive-tempering scheme in `hot_chain.R`.
-- `Ntem` - number of replicas in the ladder (default 8).
-- `tem.min` - tempering parameter of the hottest replica (default 1e-3).
+- `Ntem`, `tem.min` - `NULL` (default) for the automatic choices above, or fixed values.
 - `swap.interval` - iterations between replica-exchange sweeps (default 10).
-- `mcmc.verbose` - print per-replica acceptance rates, swap rates and step scales.
+- `mcmc.verbose` - print the chosen and adapted ladder, per-replica acceptance rates, swap
+  rates, step scales and the final `Rhat`.
+
+`run.ptmcmc()` also accepts `adapt.ladder`, `adapt.window`, `adapt.nu`, `adapt.t0`,
+`max.extend` and `Rhat.max` for finer control.
 
 ## 6. Roadmap
 

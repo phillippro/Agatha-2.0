@@ -80,7 +80,32 @@ expect_true(all(diff(pt$tems)<0),'the tempering ladder is not monotonic')
 ####the returned chain must carry the columns the rest of the code expects
 expect_true(all(c('x','y','logpost','loglike')%in%colnames(pt$out)),
             'run.ptmcmc did not return the expected chain columns')
-expect_true(nrow(pt$out)==Niter-floor(Niter/2),
-            'run.ptmcmc did not discard the burn-in half of the cold chain')
+expect_true(nrow(pt$out)>=Niter-floor(Niter/2),
+            'run.ptmcmc returned fewer samples than the post-burn-in length')
+
+####################################################
+## Automatic ladder (Vousden et al. 2016): tem.min from pilot draws over the
+## prior, rung count from the dimension, rungs adapted during burn-in to
+## equalize neighbouring swap rates, chain extended until the cold chain converges
+####################################################
+auto <- run.ptmcmc(startvalue,cov.start,iterations=Niter,Ntem=NULL,tem.min=NULL,swap.interval=10)
+expect_true(isTRUE(auto$auto.tem) && auto$tem.min>=1e-6 && auto$tem.min<=1e-2,
+            paste('automatic tem.min out of range:',auto$tem.min))
+expect_true(auto$Ntem>=4 && auto$Ntem<=20,paste('automatic rung count out of range:',auto$Ntem))
+expect_true(abs(auto$tems[1]-1)<1e-12 && abs(auto$tems[auto$Ntem]-auto$tem.min)<1e-12,
+            'the adapted ladder does not keep the cold and hottest rungs fixed')
+expect_true(all(diff(auto$tems)<0),'the adapted ladder is not monotonic')
+expect_true(any(abs(auto$tems-auto$tems.initial)>1e-6),
+            'the ladder did not adapt during burn-in')
+frac.auto <- mean(auto$out[,'x']>0)
+expect_true(abs(frac.auto-expected)<0.1,
+            paste('automatic parallel tempering recovered a mode weight of',round(frac.auto,3),
+                  'instead of',round(expected,3)))
+####after adaptation no pair of neighbours should be starved of exchanges
+expect_true(min(auto$swap.rate)>0.05,
+            paste('adapted ladder still has a starved pair; swap rates:',
+                  paste(round(100*auto$swap.rate,1),collapse=',')))
+expect_true(is.logical(auto$conv) && auto$extended>=0 && auto$extended<=3,
+            'convergence-driven extension did not report a valid state')
 
 cat('PT-MCMC tests passed\n')
