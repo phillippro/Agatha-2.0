@@ -1328,6 +1328,198 @@ run.metropolis.MCMC <- function(startvalue,cov.start,iterations,n0=2,verbose=FAL
 #    cat('range of period=',exp(range(chain[,(Np-1)*Nkeppar+1])),'d\n')
     return(val)
 }
+###proposal for parallel tempering: a single draw that is rejected when it falls
+###outside the prior box, which is the correct move for a uniform box prior and
+###avoids the retry loop of proposalfunction.simple
+ptmcmc.proposal <- function(param,cov.adapt){
+    param.new <- try(mvrnorm(n=1,mu=param,Sigma=cov.adapt,tol=tol1),TRUE)
+    if(class(param.new)[1]=='try-error'){
+        param.new <- try(mvrnorm(n=1,mu=param,Sigma=nearPD(cov.adapt)$mat,tol=tol1),TRUE)
+    }
+    if(class(param.new)[1]=='try-error') return(NULL)
+    if(any(!is.finite(param.new))) return(NULL)
+    ind1 <- grep('Mo\\d',names(param.new))
+    ind2 <- grep('omega\\d',names(param.new))
+    if(length(ind1)>0) param.new[ind1] <- param.new[ind1]%%(2*pi)
+    if(length(ind2)>0) param.new[ind2] <- param.new[ind2]%%(2*pi)
+    ind1 <- grep('sqresinw',names(param.new))
+    ind2 <- grep('sqrecosw',names(param.new))
+    if(length(ind1)>0){
+        ind <- c(ind1,ind2)
+        ok <- all(param.new[-ind]>par.min[-ind] & param.new[-ind]<par.max[-ind]) &
+            all((param.new[ind1]^2+param.new[ind2]^2)<1)
+    }else{
+        ok <- all(param.new>par.min & param.new<par.max)
+    }
+    if(!ok) return(NULL)
+    return(param.new)
+}
+
+###keep the adapted covariance inside the prior box; the hot replicas otherwise
+###adapt towards a scale that no longer produces acceptable proposals
+ptmcmc.cov <- function(cov1,cov.start,frac=0.5){
+    if(any(!is.finite(cov1))) return(cov.start)
+    s <- sqrt(abs(diag(cov1)))
+    w <- frac*(par.max-par.min)
+    r <- max(s/w,na.rm=TRUE)
+    if(is.finite(r) && r>1) cov1 <- cov1/r^2
+    return(cov1)
+}
+
+###geometric ladder of tempering parameters; tems[1]=1 is the cold chain
+ptmcmc.ladder <- function(Ntem=8,tem.min=1e-3){
+    if(Ntem<2) return(1)
+    tem.min^(seq(0,1,length.out=Ntem))
+}
+
+###run parallel tempering (replica exchange) MCMC
+run.ptmcmc <- function(startvalue,cov.start,iterations,n0=NULL,verbose=FALSE,bases='natural',
+                       tems=NULL,Ntem=8,tem.min=1e-3,swap.interval=10,nburn=NULL,
+                       sd.ini=0.05,acc.target=0.234){
+###Each replica is an adaptive Metropolis chain sampling posterior(.,tem) with its
+###own proposal covariance and its own step size. Every swap.interval iterations
+###neighbouring replicas propose to exchange states, which lets the cold chain
+###escape the local optimum around the periodogram peak. The hot replicas see a
+###flattened likelihood and therefore roam over the aliases and over eccentricity,
+###and replica exchange carries whatever they find down to the cold chain. Only
+###the cold chain is returned, so the output is a sample of the true posterior.
+    Npar <- length(startvalue)
+    if(is.null(tems)) tems <- ptmcmc.ladder(Ntem=Ntem,tem.min=tem.min)
+    tems <- sort(unique(as.numeric(tems)),decreasing=TRUE)
+    Nt <- length(tems)
+    if(is.null(nburn)) nburn <- floor(iterations/2)
+    nburn <- max(0,min(nburn,iterations-1))
+###adapt only after a warm-up: a covariance estimated from a couple of samples
+###collapses the proposal and freezes the replicas
+    if(is.null(n0)) n0 <- max(100,floor(iterations/100))
+    n0 <- max(2,min(n0,max(2,iterations-1)))
+    box <- par.max-par.min
+
+    par.cur <- matrix(rep(as.numeric(startvalue),Nt),nrow=Nt,byrow=TRUE)
+    colnames(par.cur) <- names(startvalue)
+    ll.cur <- lp.cur <- rep(NA,Nt)
+    for(k in 1:Nt){
+        pp <- posterior(par.cur[k,],tem=tems[k],bases=bases)
+        ll.cur[k] <- pp$loglike
+        lp.cur[k] <- pp$logprior
+    }
+    mu <- par.cur
+    cov.ini <- diag((sd.ini*box)^2,nrow=Npar)
+    if(any(!is.finite(cov.ini))) cov.ini <- cov.start
+    cov.adapt <- lapply(1:Nt,function(k) cov.ini)
+###a scale factor per replica, adapted towards the target acceptance rate, so that
+###each temperature finds its own step size whatever the units of the parameters
+    lambda <- rep(1,Nt)
+    head.store <- lapply(1:Nt,function(k) matrix(NA,nrow=n0,ncol=Npar))
+
+    chain <- array(dim=c(iterations+1,Npar))
+    colnames(chain) <- names(startvalue)
+    logpost <- loglike <- rep(NA,iterations+1)
+    chain[1,] <- par.cur[1,]
+    logpost[1] <- lp.cur[1]+ll.cur[1]
+    loglike[1] <- ll.cur[1]
+
+    naccept <- rep(0,Nt)
+    nnull <- rep(0,Nt)
+    Nswap <- max(1,Nt-1)
+    nswap <- nswap.acc <- rep(0,Nswap)
+    for(i in 1:iterations){
+        for(k in 1:Nt){
+            if(i==n0){
+                cov.adapt[[k]] <- covariance.n0(mat=head.store[[k]])
+            }else if(i>n0){
+                cov.adapt[[k]] <- covariance.rep(par.cur[k,],cov.adapt[[k]],mu[k,],i)
+            }
+###bound the shape before applying the step scale: replica exchange moves a
+###state discontinuously, which makes the recursive covariance update blow up,
+###and capping after the scaling would stop lambda from ever shrinking the step
+            cov.adapt[[k]] <- ptmcmc.cov(cov.adapt[[k]],cov.ini)
+            cov.prop <- lambda[k]*cov.adapt[[k]]
+            proposal <- ptmcmc.proposal(par.cur[k,],cov.prop)
+            acc <- 0
+            if(is.null(proposal)) nnull[k] <- nnull[k]+1
+            if(!is.null(proposal)){
+                prop <- posterior(proposal,tem=tems[k],bases=bases)
+                post.cur <- ll.cur[k]*tems[k]+lp.cur[k]
+                if(is.na(prop$post) | is.na(post.cur)){
+                    probab <- 0
+                }else{
+                    probab <- exp(prop$post-post.cur)
+                }
+                if(runif(1)<probab){
+                    par.cur[k,] <- proposal
+                    ll.cur[k] <- prop$loglike
+                    lp.cur[k] <- prop$logprior
+                    naccept[k] <- naccept[k]+1
+                    acc <- 1
+                }
+            }
+###Robbins-Monro update of the step size
+            gam <- min(0.5,i^(-0.6))
+            lambda[k] <- exp(log(lambda[k])+gam*(acc-acc.target))
+            lambda[k] <- min(max(lambda[k],1e-8),1e4)
+            if(i<=n0) head.store[[k]][i,] <- par.cur[k,]
+            mu[k,] <- (mu[k,]*i+par.cur[k,])/(i+1)
+        }
+###replica exchange between neighbouring temperatures; the priors cancel so the
+###acceptance ratio only depends on the likelihoods and the tempering parameters
+        if(Nt>1 & i%%swap.interval==0){
+            for(k in 1:(Nt-1)){
+                nswap[k] <- nswap[k]+1
+                lr <- (tems[k]-tems[k+1])*(ll.cur[k+1]-ll.cur[k])
+                if(!is.na(lr) && log(runif(1))<lr){
+                    ptmp <- par.cur[k,]
+                    par.cur[k,] <- par.cur[k+1,]
+                    par.cur[k+1,] <- ptmp
+                    ltmp <- ll.cur[k]
+                    ll.cur[k] <- ll.cur[k+1]
+                    ll.cur[k+1] <- ltmp
+                    rtmp <- lp.cur[k]
+                    lp.cur[k] <- lp.cur[k+1]
+                    lp.cur[k+1] <- rtmp
+                    nswap.acc[k] <- nswap.acc[k]+1
+                }
+            }
+        }
+        chain[i+1,] <- par.cur[1,]
+        logpost[i+1] <- lp.cur[1]+ll.cur[1]
+        loglike[i+1] <- ll.cur[1]
+        if(verbose & (i%%1000==0)){
+            cat('PTMCMC i=',i,'/',iterations,'; cold acceptance:',round(100*naccept[1]/i,1),
+                '%; swap acceptance:',paste(round(100*nswap.acc/pmax(nswap,1)),collapse=','),
+                '%; max loglike=',round(max(loglike[1:(i+1)],na.rm=TRUE),2),'\n')
+        }
+    }
+    out <- cbind(chain,logpost,loglike)[-(1:(nburn+1)),,drop=FALSE]
+    acceptance <- 100*naccept[1]/iterations
+    swap.rate <- nswap.acc/pmax(nswap,1)
+###split-chain convergence check on the returned cold chain
+    Rhat <- conv <- NULL
+    mcmc <- out[,!grepl('Mo|omega|logpost|loglike',colnames(out)),drop=FALSE]
+    Nsub <- 5
+    subchain.len <- floor(nrow(mcmc)/Nsub)
+    if(subchain.len>1 & ncol(mcmc)>0){
+        var.sub <- mean.sub <- array(data=NA,dim=c(Nsub,ncol(mcmc)))
+        meanvar <- mean.all <- var.single.est <- rep(NA,ncol(mcmc))
+        for(j1 in 1:ncol(mcmc)){
+            for(i1 in 1:Nsub){
+                var.sub[i1,j1] <- var(mcmc[((i1-1)*subchain.len+1):(i1*subchain.len),j1])
+                mean.sub[i1,j1] <- mean(mcmc[((i1-1)*subchain.len+1):(i1*subchain.len),j1])
+            }
+            meanvar[j1] <- mean(var.sub[,j1])
+            mean.all[j1] <- mean(mean.sub[,j1])
+            var.single.est[j1] <- subchain.len/(Nsub-1)*sum((mean.sub[,j1]-mean.all[j1])^2)
+        }
+        var.est <- (subchain.len-1)/subchain.len*meanvar+1/subchain.len*var.single.est
+        Rhat <- sqrt(var.est/meanvar)
+        if(any(is.na(Rhat))) Rhat[is.na(Rhat)] <- 1
+        conv <- !any(Rhat>1.1)
+    }
+    return(list(out=out,Rhat=Rhat,conv=conv,acc=acceptance,tems=tems,
+                swap.rate=swap.rate,acc.all=100*naccept/iterations,
+                null.rate=100*nnull/iterations,lambda=lambda))
+}
+
 bin.simple <- function(data,Nbin){
     x <- data[,1]
     y <- data[,2]

@@ -162,7 +162,11 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     output$signal <- renderUI({
         if(is.null(input$per.type)) return()
         if(!is.null(Ntarget()) && Ntarget()>1){
-            radioButtons("signal.type",'Signal type',c("Circular shared signal"="circular"))
+            if(any(input$per.type=='BFP')){
+                radioButtons("signal.type",'Signal type',c("Circular shared signal"="circular","Keplerian shared signal"='kepler','Stochastic'='stochastic'))
+            }else{
+                radioButtons("signal.type",'Signal type',c("Circular shared signal"="circular","Keplerian shared signal"='kepler'))
+            }
         }else if(any(input$per.type=='BFP')){
             radioButtons("signal.type",'Signal type',c("Circular"="circular","Keplerian"='kepler','Stochastic'='stochastic'))
         }else{

@@ -10,10 +10,26 @@ Completed in the multi-set implementation:
 1. Added `tests/test_multiset_periodogram.R` for period recovery, offset recovery, and `calc.1Dper()` integration.
 1. Refreshed `README.md` with the app workflow and command-line limitation.
 
+Completed in the Keplerian, stochastic and PT-MCMC implementation:
+
+1. Added a shared Keplerian model for multi-set fits (`KeplerFit.multiset`), fitted with the
+   linear-in-`K cos w`/`K sin w` parameterization so only `P`, `e` and `Mo` are optimized.
+1. Added a purely stochastic multi-set model (`multiset_noise_periodogram`) that scans the
+   AR/MA kernel time scale instead of a signal period, against a white-noise baseline.
+1. Gave `multiset_lag_terms` an exponential `exp(-|dt|/tau)` kernel, defaulting to the previous
+   plain lags so the signal periodogram is unchanged.
+1. Replaced the multi-set branch of `sigfit()` with `sigfit.multiset()`, which dispatches on
+   circular, Keplerian and stochastic signal types.
+1. Exposed all three signal types for multi-set fits in `server.R`.
+1. Replaced the sequential adaptive tempering of `hot_chain.R` with parallel tempering
+   (`run.ptmcmc`) as the default MCMC, keeping the old path under `mcmc.method`.
+1. Added `tests/test_ptmcmc.R` and extended `tests/test_multiset_periodogram.R`.
+
 Remaining follow-up work:
 
 1. Extend the multi-set model to proxy terms.
-1. Add Keplerian and MCMC refinement for multi-set fits.
+1. Extend MCMC refinement to multi-set fits; `sigfit.multiset()` still warns and returns the
+   weighted linear fit when MCMC is requested.
 1. Add a public bundled-data demo with documented expected output.
 1. Verify against the unavailable draft model in `paper/abfp/bkp/astro_periodogram2.pdf` if that paper tree is restored.
 

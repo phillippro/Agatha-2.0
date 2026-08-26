@@ -1074,7 +1074,10 @@ global.notation <- function(t,y,dy,Nma,Nar,Indices,GP,gp.par){
     return(pars)
 }
 
-multiset_lag_terms <- function(y, set.id, Nar=0, Nma=0, residuals=NULL){
+multiset_lag_terms <- function(y, set.id, Nar=0, Nma=0, residuals=NULL, t=NULL, tau=NULL, tauAR=NULL){
+###tau/tauAR are the moving-average/auto-regressive time scales of the exponential
+###kernel exp(-|dt|/tau) applied to each lag term. They default to NULL, which
+###reproduces the plain lagged terms used by the multi-set signal periodogram.
     set.id <- factor(set.id)
     levels.id <- levels(set.id)
     normalize.order <- function(order){
@@ -1091,14 +1094,21 @@ multiset_lag_terms <- function(y, set.id, Nar=0, Nma=0, residuals=NULL){
     Nar <- normalize.order(Nar)
     Nma <- normalize.order(Nma)
     terms <- c()
-    add.lags <- function(source, prefix, orders, terms){
+    add.lags <- function(source, prefix, orders, terms, timescale){
+        decay <- !is.null(t) && !is.null(timescale) && is.finite(timescale) && timescale>0
         for(j in 1:length(levels.id)){
             rows <- which(set.id==levels.id[j])
             if(orders[j]>0 && length(rows)>1){
                 for(lag in 1:orders[j]){
                     col <- rep(0,length(y))
                     if(length(rows)>lag){
-                        col[rows[(lag+1):length(rows)]] <- source[rows[1:(length(rows)-lag)]]
+                        target <- rows[(lag+1):length(rows)]
+                        origin <- rows[1:(length(rows)-lag)]
+                        vals <- source[origin]
+                        if(decay){
+                            vals <- vals*exp(-abs(t[target]-t[origin])/timescale)
+                        }
+                        col[target] <- vals
                     }
                     terms <- cbind(terms,col)
                     colnames(terms)[ncol(terms)] <- paste0(prefix,'_',make.names(levels.id[j]),'_lag',lag)
@@ -1107,18 +1117,21 @@ multiset_lag_terms <- function(y, set.id, Nar=0, Nma=0, residuals=NULL){
         }
         return(terms)
     }
-    terms <- add.lags(y,'ar',Nar,terms)
+    terms <- add.lags(y,'ar',Nar,terms,tauAR)
     if(is.null(residuals)){
         residuals <- rep(0,length(y))
     }
-    terms <- add.lags(residuals,'ma',Nma,terms)
+    terms <- add.lags(residuals,'ma',Nma,terms,tau)
     return(terms)
 }
 
 multiset_design <- function(t, set.id, omega=NULL, trend=TRUE, lag.terms=NULL){
     set.id <- factor(set.id)
-    offsets <- model.matrix(~ set.id - 1)
-    colnames(offsets) <- paste0('gamma_', make.names(levels(set.id)))
+    levs <- levels(set.id)
+###built directly rather than with model.matrix so that a single data set works too
+    offsets <- matrix(unlist(lapply(levs,function(l) as.numeric(set.id==l))),
+                      nrow=length(set.id))
+    colnames(offsets) <- paste0('gamma_', make.names(levs))
     design <- offsets
     if(trend){
         design <- cbind(design, beta=t)
@@ -1132,9 +1145,14 @@ multiset_design <- function(t, set.id, omega=NULL, trend=TRUE, lag.terms=NULL){
     return(design)
 }
 
-multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE, Nar=0, Nma=0, residuals=NULL){
-    lag.terms <- multiset_lag_terms(y=y,set.id=set.id,Nar=Nar,Nma=Nma,residuals=residuals)
+multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE, Nar=0, Nma=0, residuals=NULL,
+                         tau=NULL, tauAR=NULL, signal=NULL){
+    lag.terms <- multiset_lag_terms(y=y,set.id=set.id,Nar=Nar,Nma=Nma,residuals=residuals,
+                                    t=t,tau=tau,tauAR=tauAR)
     X <- multiset_design(t=t,set.id=set.id,omega=omega,trend=trend,lag.terms=lag.terms)
+    if(!is.null(signal)){
+        X <- cbind(signal,X)
+    }
     w <- 1/dy^2
     fit <- lm.wfit(x=X,y=y,w=w)
     coef <- fit$coefficients
@@ -1211,7 +1229,17 @@ multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NU
 }
 
 BFP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NA,
-                         tspan=NULL, sampling='combined', section=1, progress=FALSE){
+                         tspan=NULL, sampling='combined', section=1, progress=FALSE,
+                         noise.only=FALSE){
+    if(noise.only & !any(as.integer(Nma)>0) & !any(as.integer(Nar)>0)){
+        warning('A purely stochastic multi-set fit needs at least one AR or MA component; fitting the periodic model instead.')
+        noise.only <- FALSE
+    }
+    if(noise.only){
+        return(multiset_noise_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,
+                                          fmax=fmax,fmin=fmin,tspan=tspan,sampling=sampling,
+                                          section=section,trend=TRUE))
+    }
     multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmax=fmax,fmin=fmin,
                          tspan=tspan,sampling=sampling,section=section,trend=TRUE)
 }
@@ -1226,6 +1254,222 @@ MLP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin
     out$power <- out$power-max(out$power)
     out$logBF <- out$power
     return(out)
+}
+
+###########################################################################
+####Keplerian and purely stochastic fitting of multi-data-set time series
+###########################################################################
+multiset_kepler_basis <- function(t, P, e, Mo){
+###Basis of a Keplerian signal in the form for which the model is linear:
+###K*(cos(omega+nu)+e*cos(omega)) = C1*(cos(nu)+e)+C2*sin(nu)
+###with C1=K*cos(omega) and C2=-K*sin(omega). The nonlinear parameters are
+###therefore only P, e and Mo, which keeps the multi-set optimization robust.
+    e <- min(max(e,0),0.99)
+    M <- (Mo+2*pi*t/P)%%(2*pi)
+    E <- kep.mt2(M,e)
+    nu <- 2*atan(sqrt((1+e)/(1-e))*tan(E/2))
+    return(cbind(kc=cos(nu)+e,ks=sin(nu)))
+}
+
+multiset_kepler_amp <- function(C1, C2){
+###Convert the linear Keplerian coefficients back into K and omega
+    K <- sqrt(C1^2+C2^2)
+    if(K==0){
+        omega <- 0
+    }else{
+        omega <- as.numeric(xy2phi(C1,-C2))
+    }
+    return(c(K=as.numeric(K),omega=omega))
+}
+
+multiset_kepler_curve <- function(par, t){
+###Keplerian radial velocity of a multi-set fit at arbitrary times
+    P <- par[['P1']]
+    K <- par[['K1']]
+    e <- par[['e1']]
+    omega <- par[['omega1']]
+    Mo <- par[['Mo1']]
+    M <- (Mo+2*pi*t/P)%%(2*pi)
+    E <- kep.mt2(M,e)
+    nu <- 2*atan(sqrt((1+e)/(1-e))*tan(E/2))
+    return(as.numeric(K*(cos(omega+nu)+e*cos(omega))))
+}
+
+multiset_kepler_wls <- function(t, y, dy, set.id, P, e, Mo, trend=TRUE, Nar=0, Nma=0,
+                                residuals=NULL, max.iter=3){
+###Weighted least squares for a shared Keplerian signal, one offset per data set,
+###a shared trend and per-data-set AR/MA lag terms
+    kep <- multiset_kepler_basis(t=t,P=P,e=e,Mo=Mo)
+    fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=NULL,trend=trend,Nar=Nar,Nma=Nma,
+                        residuals=residuals,signal=kep)
+    if(any(as.integer(Nma)>0)){
+        for(iter in 1:max.iter){
+            fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=NULL,trend=trend,Nar=Nar,Nma=Nma,
+                                residuals=fit$res,signal=kep)
+        }
+    }
+    fit$ysig <- as.numeric(kep%*%fit$coef[c('kc','ks')])
+    fit$kep <- kep
+    return(fit)
+}
+
+KeplerFit.multiset <- function(per, frac=0.2, emax=0.95, max.iter=3){
+####################################################
+## Keplerian fitting of a multi-data-set periodogram
+## Input:
+##   per - output of BFP.multiset or MLP.multiset
+##
+## Output:
+##   ParKep - shared Keplerian parameters plus the per-data-set nuisance parameters
+####################################################
+###sigfit() replaces per$data with the raw input table, so the fit has to start
+###from the data the periodogram itself used
+    if(!is.null(per$df) && !is.null(per$df$data)){
+        data <- per$df$data
+    }else{
+        data <- per$data
+    }
+    t <- as.numeric(data[,1])
+    t <- t-min(t)
+    y <- as.numeric(data[,2])
+    dy <- as.numeric(data[,3])
+    set.id <- factor(per$set.id)
+    trend <- if(is.null(per$trend)) TRUE else isTRUE(per$trend)
+    Nar <- if(is.null(per$Nar)) 0 else per$Nar
+    Nma <- if(is.null(per$Nma)) 0 else per$Nma
+    Popt <- as.numeric(per$Popt[1])
+    par.opt <- unlist(per$par.opt)
+    A <- if(any(names(par.opt)=='A')) as.numeric(par.opt['A']) else 0
+    B <- if(any(names(par.opt)=='B')) as.numeric(par.opt['B']) else 0
+    if(A==0 & B==0){
+        phi <- 0
+    }else{
+        phi <- as.numeric(xy2phi(A,B))
+    }
+    Plow <- max((1-frac)*Popt,1e-6)
+    Pup <- (1+frac)*Popt
+    fit.at <- function(v){
+        multiset_kepler_wls(t=t,y=y,dy=dy,set.id=set.id,P=v[1],e=v[2],Mo=v[3],
+                            trend=trend,Nar=Nar,Nma=Nma,max.iter=max.iter)
+    }
+    obj <- function(v){
+        out <- try(fit.at(v),TRUE)
+        if(class(out)[1]=='try-error') return(1e10)
+        if(!is.finite(out$logL)) return(1e10)
+        return(-out$logL)
+    }
+###the circular solution fixes the phase, so only e and Mo need to be scanned
+    e.start <- c(0,0.1,0.3,0.5,0.7)
+    Mo.start <- ((-phi)+seq(0,2*pi,length.out=5)[-5])%%(2*pi)
+    starts <- as.matrix(expand.grid(P=Popt,e=e.start,Mo=Mo.start))
+    lower <- c(Plow,0,0)
+    upper <- c(Pup,emax,2*pi)
+    lls <- c()
+    pars <- c()
+    best <- NULL
+    best.ll <- -Inf
+    for(k in 1:nrow(starts)){
+        v0 <- pmin(pmax(as.numeric(starts[k,]),lower+1e-8),upper-1e-8)
+        out <- try(optim(par=v0,fn=obj,method='L-BFGS-B',lower=lower,upper=upper,
+                         control=list(maxit=500)),TRUE)
+        if(class(out)[1]=='try-error') next
+        ll <- -out$value
+        if(!is.finite(ll) | ll<=-1e9) next
+        lls <- c(lls,ll)
+        pars <- rbind(pars,out$par)
+        if(ll>best.ll){
+            best.ll <- ll
+            best <- out$par
+        }
+    }
+    if(is.null(best)){
+        warning('Keplerian multi-set optimization failed; falling back to the circular solution.')
+        best <- c(Popt,0,(-phi)%%(2*pi))
+    }
+    fit <- fit.at(best)
+    coef <- fit$coef
+    amp <- multiset_kepler_amp(as.numeric(coef['kc']),as.numeric(coef['ks']))
+    ParKep <- list(P1=as.numeric(best[1]),K1=as.numeric(amp['K']),e1=as.numeric(best[2]),
+                   omega1=as.numeric(amp['omega']),Mo1=as.numeric(best[3]))
+    extra <- coef[!(names(coef)%in%c('kc','ks'))]
+    ParKep <- c(ParKep,as.list(extra))
+    logL0 <- if(is.null(per$LogLike0)) NA else as.numeric(per$LogLike0)
+###five extra free parameters relative to the no-signal multi-set model
+    Nextra <- 5
+    lnBF <- fit$logL-logL0-Nextra/2*log(length(y))
+    return(list(ParKep=ParKep,ysig=fit$ysig,yfull=fit$yfit,res=fit$res,logL=fit$logL,
+                lnBF=lnBF,ll0=logL0,lls=lls,pars=pars,coef=coef,Popt=ParKep$P1,
+                data=data,set.id=set.id,trend=trend,Nar=Nar,Nma=Nma))
+}
+
+multiset_noise_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NA,
+                                       tspan=NULL, sampling='combined', section=1,
+                                       trend=TRUE, max.iter=3){
+###Purely stochastic multi-set fit: no periodic signal is included and the
+###periodogram scans the time scale of the exponential AR/MA kernel instead of
+###the period of a signal. The baseline is the white-noise multi-set model.
+    unit <- 1
+    t <- (t-min(t))/unit
+    set.id <- factor(set.id)
+    data <- cbind(t,y,dy)
+    if(is.null(tspan)){
+        tspan <- max(t)-min(t)
+    }
+    if(is.na(fmin)){
+        fmin <- 1/(tspan*ofac)
+    }
+    fnyq <- 0.5*length(y)/tspan
+    if(is.null(fmax)){
+        fmax <- fnyq
+    }
+    f <- fsample(fmin,fmax,sampling,section,ofac,unit)
+    taus <- unit/f
+    base <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend,Nar=0,Nma=0)
+    logLs <- rep(NA,length(taus))
+    opt.pars <- c()
+    yfits <- matrix(NA,nrow=length(t),ncol=length(taus))
+    residuals <- matrix(NA,nrow=length(t),ncol=length(taus))
+    for(kk in 1:length(taus)){
+        fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend,Nar=Nar,Nma=Nma,
+                            residuals=base$res,tau=taus[kk],tauAR=taus[kk])
+        if(any(as.integer(Nma)>0)){
+            for(iter in 1:max.iter){
+                fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend,Nar=Nar,Nma=Nma,
+                                    residuals=fit$res,tau=taus[kk],tauAR=taus[kk])
+            }
+        }
+        logLs[kk] <- fit$logL
+        opt.pars <- rbind(opt.pars,c(fit$coef,logtau=log(taus[kk]),logtauAR=log(taus[kk])))
+        yfits[,kk] <- fit$yfit
+        residuals[,kk] <- fit$res
+    }
+    Ndata <- length(t)
+    lag.terms <- multiset_lag_terms(y=y,set.id=set.id,Nar=Nar,Nma=Nma,
+                                    residuals=rep(0,length(y)),t=t,tau=1,tauAR=1)
+    Nlag <- if(is.null(lag.terms)) 0 else ncol(lag.terms)
+###one lag coefficient per term plus the shared MA and AR time scales
+    Nextra <- Nlag+sum(any(as.integer(Nma)>0),any(as.integer(Nar)>0))
+    logBF <- logLs-base$logL-Nextra/2*log(Ndata)
+    inds <- sort(logBF,decreasing=TRUE,index.return=TRUE)$ix
+    Popt <- taus[inds[1]]
+    opt.par <- opt.pars[inds[1],]
+    opt.par.top <- opt.pars[inds[1:min(10,length(inds))],,drop=FALSE]
+    yfull <- yfits[,inds[1]]
+    res <- residuals[,inds[1]]
+###the red-noise component is the full prediction minus the offsets and trend
+    white <- multiset_design(t=t,set.id=set.id,omega=NULL,trend=trend,lag.terms=NULL)
+    yred <- as.numeric(yfull-white%*%opt.par[colnames(white)])
+    ysig <- rep(0,length(t))
+    ps <- taus[inds[1:min(5,length(inds))]]
+    power.opt <- logBF[inds[1:min(5,length(inds))]]
+    df <- list(data=data,set.id=set.id,multi_set=TRUE,Nma=Nma,Nar=Nar,NI=0,type='noise')
+    return(list(data=data,logBF=logBF,logLs=logLs,llmax=max(logLs),lnbfs=matrix(NA,nrow=length(taus),ncol=Ndata),
+                P=taus,Popt=Popt,Popts=taus[inds[1:min(10,length(inds))]],logBF.opt=logBF[inds[1:min(10,length(inds))]],
+                par.opt=opt.par,opt.par=opt.par.top,res=res,res.nst=res,res.n=res,res.s=res,
+                res.st=res,res.nt=res,ysig=ysig,yred=yred,yfull=yfull,base.fit=base,pars=opt.pars,df=df,
+                power=logBF,ps=ps,power.opt=power.opt,sig.level=c(-Nextra/2*log(Ndata),0,log(150)),
+                ParLow=rep(NA,length(opt.par)),ParUp=rep(NA,length(opt.par)),LogLike0=base$logL,
+                multi_set=TRUE,noise_only=TRUE,set.id=set.id,trend=trend,Nma=Nma,Nar=Nar))
 }
 
 ####Marginalized likelihood periodogram

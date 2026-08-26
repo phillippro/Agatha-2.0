@@ -280,7 +280,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
                     cat('Nma=',Nma,';Nar=',Nar,';model.type=man;Indices=',Indices, ';ofac=',ofac,';fmin=',frange[1],';fmax=',frange[2],';quantify=',quantify, ';renew=',renew,';noise.only=',noise.only,'\n')
                 }
                 if(multi.set){
-                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE)
+                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE,noise.only=noise.only)
                 }else{
                     rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only)
                 }
@@ -373,11 +373,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
 	}else{
 	     Pconv <- TRUE
 	}
-        fit.SigType <- SigType
-        if(multi.set & SigType!='circular'){
-            fit.SigType <- 'circular'
-        }
-        fit <- sigfit(per=rv.ls,data=tab,SigType=fit.SigType,basis=basis,Ncores=Ncores,mcf=(mcf & !multi.set),Niter=Niter,Pconv=Pconv)
+        fit <- sigfit(per=rv.ls,data=tab,SigType=SigType,basis=basis,Ncores=Ncores,mcf=(mcf & !multi.set),Niter=Niter,Pconv=Pconv)
 ###update the output from periodogram
         rv.ls <- fit$per
 
@@ -562,7 +558,8 @@ par.m2a <- function(par.old){
 }
 
 #mcfit <- function(startvalue,Niter,Ncores=1){
-mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSig=NULL,Pconv=FALSE,Ncores=4){
+mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSig=NULL,Pconv=FALSE,Ncores=4,
+                  mcmc.method='PT',Ntem=8,tem.min=1e-3,swap.interval=10,mcmc.verbose=FALSE){
 ###get initial parameters from agatha
 #    break()
     time.unit <- 365.25
@@ -674,14 +671,26 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
     Niter0 <- Niter
     per.prim <- c()
     mcmc <- foreach(ncore=1:Ncores,.errorhandling = 'pass') %dopar% {
-#        if(FALSE){
-        if(TRUE){
+        if(mcmc.method=='PT'){
+###parallel tempering: the hot replicas explore the aliases of the periodogram
+###peak and hand good states to the cold chain through replica exchange, so no
+###separate adaptive-tempering burn-in is needed
+            tmp <- run.ptmcmc(startvalue,cov.start,iterations=max(as.numeric(Niter),1000),
+                              bases=rep(basis,10),Ntem=Ntem,tem.min=tem.min,
+                              swap.interval=swap.interval,verbose=mcmc.verbose)
+            if(mcmc.verbose){
+                cat('PTMCMC tems:',paste(format(tmp$tems,digit=2),collapse=','),'\n')
+                cat('PTMCMC per-replica acceptance (%):',paste(round(tmp$acc.all,1),collapse=','),'\n')
+                cat('PTMCMC swap acceptance (%):',paste(round(100*tmp$swap.rate,1),collapse=','),'\n')
+                cat('PTMCMC out-of-bound proposals (%):',paste(round(tmp$null.rate,1),collapse=','),'\n')
+                cat('PTMCMC step scale:',paste(format(tmp$lambda,digit=2),collapse=','),'\n')
+            }
+        }else{
             cat('use hot_chain.R\n')
             source('hot_chain.R',local=TRUE)
             startvalue <- par.hot
+            tmp <- run.metropolis.MCMC(startvalue,cov.start,iterations=max(as.numeric(Niter),1000),tem=1,bases=rep(basis,10))
         }
-        tmp <- run.metropolis.MCMC(startvalue,cov.start,iterations=max(as.numeric(Niter),1000),tem=1,bases=rep(basis,10))
-#        tmp$out[-(1:floor(nrow(tmp$out)/2)),]
         tmp$out
     }
 
@@ -787,7 +796,66 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
     list(mc=mc,llmax=llmax,lpmax=lpmax,ParSig=ParSig,out=out,par.stat=par.stat,yma=yma,yar=yar,yred=yred,ysig=ysig,ysig0=as.numeric(ysig0),ysim.red=ysim.red,ysim.sig=ysim.sig,ytrend=ytrend,yproxy=yproxy,res=res,res.sig=res.sig,popt=popt,tsim0=tsim)#ysim.all=ysim.all
 }
 
-sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4,Niter=1e3,Pconv=FALSE,res.type='sig'){
+sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE){
+###Turn a multi-data-set periodogram into a fitted model, its residual and its
+###phase-folded prediction. SigType selects a shared circular signal, a shared
+###Keplerian signal or a purely stochastic (signal-free) red-noise model.
+    if(mcf){
+        warning('MCMC refinement is not implemented for multi-set periodograms; using the weighted linear multi-set fit.')
+    }
+    if(SigType=='stochastic' & !isTRUE(per$noise_only)){
+        warning('The multi-set periodogram was not computed with a purely stochastic model; using the circular signal instead.')
+        SigType <- 'circular'
+    }
+    if(SigType!='stochastic' & isTRUE(per$noise_only)){
+        warning('The multi-set periodogram is purely stochastic; reporting the stochastic fit.')
+        SigType <- 'stochastic'
+    }
+    if(SigType=='kepler'){
+        fit <- KeplerFit.multiset(per)
+        popt <- as.numeric(fit$ParKep$P1)
+        ysig0 <- as.numeric(fit$ysig)
+        res <- as.numeric(fit$res)
+        ysim.sig <- multiset_kepler_curve(fit$ParKep,tsim)
+        ParSig <- unlist(fit$ParKep)
+        per$par.opt <- fit$ParKep
+        per$Popt <- popt
+        per$res <- res
+        per$ysig <- ysig0
+        per$yfull <- fit$yfull
+        per$lnBF.kepler <- fit$lnBF
+    }else if(SigType=='stochastic'){
+        popt <- as.numeric(per$Popt[1])
+        ysig0 <- as.numeric(per$yred)
+        res <- as.numeric(per$res)
+        yred.fun <- approxfun(t,ysig0,rule=2)
+        ysim.sig <- as.numeric(yred.fun(tsim))
+        ParSig <- c(tau=popt,unlist(per$par.opt))
+    }else{
+        popt <- as.numeric(per$Popt[1])
+        par.opt <- unlist(per$par.opt)
+        ysig0 <- as.numeric(per$ysig)
+        res <- as.numeric(per$res)
+        ysim.sig <- as.numeric(par.opt['A']*cos(2*pi/popt*tsim)+par.opt['B']*sin(2*pi/popt*tsim))
+        ParSig <- c(P=popt,par.opt)
+    }
+    ysig <- ysig0+res
+    per$res.s <- res
+    if(is.null(popt)){
+        popt <- 1e7
+    }else if(is.na(popt) | popt<=0){
+        popt <- 1e7
+    }
+    tsim1 <- tsim%%popt
+    inds <- sort(tsim1,index.return=TRUE)$ix
+    return(list(per=per,t=t%%popt,y=as.numeric(ysig),ey=data[,3],res=as.numeric(res),
+                ysig0=as.numeric(ysig0),tsim0=tsim,ysim0=ysim.sig,
+                tsim=tsim1[inds],ysim=ysim.sig[inds],ParSig=ParSig,
+                par.stat=NULL,popt=popt,mc=c()))
+}
+
+sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4,Niter=1e3,Pconv=FALSE,res.type='sig',
+                   mcmc.method='PT',Ntem=8,tem.min=1e-3,swap.interval=10,mcmc.verbose=FALSE){
 ###This function is to modify the output of various periodograms to give residual, model prediction, and optimal parameters as well as posterior/likelihood samples
     ##x is a list
     ##SigType is either circular or kepler
@@ -815,24 +883,7 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
     popt <- per$Popt
     save.data <- FALSE
     if(isTRUE(per$multi_set)){
-        if(mcf){
-            warning('MCMC refinement is not implemented for multi-set periodograms; using the weighted linear multi-set fit.')
-        }
-        popt <- as.numeric(per$Popt[1])
-        par.opt <- unlist(per$par.opt)
-        ysig0 <- as.numeric(per$ysig)
-        res <- as.numeric(per$res)
-        ysig <- ysig0+res
-        ysim.sig <- as.numeric(par.opt['A']*cos(2*pi/popt*tsim)+par.opt['B']*sin(2*pi/popt*tsim))
-        ysim.all <- ysim.sig
-        ParSig <- c(P=popt,par.opt)
-        per$res.s <- res
-        tsim1 <- tsim%%popt
-        inds <- sort(tsim1,index.return=TRUE)$ix
-        return(list(per=per,t=t%%popt,y=as.numeric(ysig),ey=data[,3],res=as.numeric(res),
-                    ysig0=as.numeric(ysig0),tsim0=tsim,ysim0=ysim.sig,
-                    tsim=tsim1[inds],ysim=ysim.sig[inds],ParSig=ParSig,
-                    par.stat=NULL,popt=popt,mc=c()))
+        return(sigfit.multiset(per=per,data=data,t=t,tsim=tsim,SigType=SigType,mcf=mcf))
     }
 #    }else{
         if(SigType=='circular'){
@@ -923,7 +974,9 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
 #    }
 #    save(list=ls(all=TRUE),file='test.Robj')
     if(mcf){
-        tmp <- mcfit(per=per,data=data,tsim=tsim,Niter=Niter,SigType=SigType,basis=basis,Pconv=Pconv,Ncores=Ncores)
+        tmp <- mcfit(per=per,data=data,tsim=tsim,Niter=Niter,SigType=SigType,basis=basis,Pconv=Pconv,Ncores=Ncores,
+                     mcmc.method=mcmc.method,Ntem=Ntem,tem.min=tem.min,swap.interval=swap.interval,
+                     mcmc.verbose=mcmc.verbose)
         startvalue <- ParSig <- tmp$ParSig
         mc <- tmp$mc
 	par.stat <- tmp$par.stat
@@ -1064,7 +1117,12 @@ per1D.plot <- function(per.list,tits,pers,levels,ylabs,download=FALSE,index=NULL
                                         #            ylim <- c(ymin,max(max(power)+0.15*(max(power)-ymin),levels[which(!is.na(levels[,i])),i]))
                 ylim <- c(ymin,max(power)+0.15*(max(power)-ymin))
             }
-            plot(P,power,xlab='Period [day]',ylab=ylab,xaxt='n',log='x',type='l',main=titles[i], ylim=ylim)
+            if(SigType=='stochastic'){
+                xlab <- 'Time scale [day]'
+            }else{
+                xlab <- 'Period [day]'
+            }
+            plot(P,power,xlab=xlab,ylab=ylab,xaxt='n',log='x',type='l',main=titles[i], ylim=ylim)
             magaxis(side=1,tcl=-0.5)
             if(!grepl('Window',titles[i])){
                 abline(h=levels[,i],lty=2)

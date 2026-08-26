@@ -100,7 +100,7 @@ R -e "shiny::runApp('.', launch.browser = TRUE)"
 6. Open `1D Periodogram`.
 7. Select `HD210193` as the data set.
 8. Select `BFP` as the periodogram type.
-9. Use `Circular` as the signal type for a quick first pass.
+9. Use `Circular` as the signal type for a quick first pass, then `Keplerian` to refine the orbit or `Stochastic` to fit correlated noise with no signal.
 10. Set `Number of AR components` to `0`.
 11. Set `Number of MA components` to `1`.
 12. Keep the default period range for a first run.
@@ -114,14 +114,22 @@ To demo with DACE-derived data instead, choose `HD40307_DACE_HARPS03` in `Choose
 
 ### Demo: multi-set 1D periodogram in the app
 
-The Shiny 1D periodogram can fit multiple selected RV data sets simultaneously. For multiple data sets, `BFP` and `MLP` use a shared circular signal with one fitted RV offset per data set. The AR/MA controls remain available per data set and are included as per-set lag nuisance terms in the combined fit. Proxy terms, Keplerian refinement, and MCMC refinement remain single-data-set features in this workflow.
+The Shiny 1D periodogram can fit multiple selected RV data sets simultaneously. For multiple data sets, `BFP` and `MLP` fit a shared signal with one fitted RV offset per data set and a shared linear trend. The AR/MA controls remain available per data set and are included as per-set lag nuisance terms in the combined fit.
+
+Three signal types are available for multi-set fits:
+
+- `Circular shared signal` fits a shared sinusoid, and is the fastest first pass.
+- `Keplerian shared signal` refits the periodogram peak as a shared eccentric orbit (`P`, `K`, `e`, `omega`, `Mo`) while keeping the per-set offsets, the trend and the AR/MA terms. The Keplerian is written so that the model is linear in `K*cos(omega)` and `K*sin(omega)`, which leaves only `P`, `e` and `Mo` to be optimized and makes the multi-start fit robust.
+- `Stochastic` (BFP only) fits a purely stochastic model with no periodic signal at all. The periodogram then scans the time scale of the exponential AR/MA kernel rather than the period of a signal, and the Bayes factor is measured against the white-noise multi-set model. At least one AR or MA component must be selected; otherwise the periodic model is fitted instead.
+
+Proxy terms and MCMC refinement remain single-data-set features in this workflow.
 
 1. Start the app.
 2. In `Choose File`, select two or more RV data sets and click `upload and show data`.
 3. Open `1D Periodogram`.
 4. Select the same data sets under `Data sets`.
 5. Choose `BFP` or `MLP`.
-6. Keep `Signal type` as `Circular shared signal`.
+6. Choose `Signal type`: `Circular shared signal`, `Keplerian shared signal`, or `Stochastic` (BFP with at least one AR/MA component).
 7. Click `Calculate periodograms`.
 
 ### Demo: command-line run
@@ -152,7 +160,7 @@ After downloading the source code and entering the repository directory, you can
 
 >The sixth argument `data` is the relative path where the data files are put. If the directory is where the agatha2.R file is located, use `.` instead.
 
->The last arguments provide the data files to be analyzed. The command-line runner still treats multiple data files independently. Use the Shiny 1D Periodogram tab for simultaneous multi-set BFP/MLP fitting with shared circular signal parameters and one offset per data set.
+>The last arguments provide the data files to be analyzed. The command-line runner still treats multiple data files independently. Use the Shiny 1D Periodogram tab for simultaneous multi-set BFP/MLP fitting with shared circular, Keplerian or purely stochastic model parameters and one offset per data set.
 
 By running the above commandline, the output would be
 
@@ -223,7 +231,29 @@ These files provide you plots and relevant data which store the x, y and probabl
 
 >results/HD210193_BFP_MA_periodogram_xxx - periodograms for columns 4,5,... in the data file. These columns store activity indices in the case of RV set. 
 
-## 4. Roadmap
+## 4. MCMC sampling
+
+When `MCMC sample size` is set to a non-zero value, the signal found by the periodogram is
+constrained with a parallel-tempering (replica-exchange) MCMC. A ladder of chains samples
+`loglike * tem + logprior` for tempering parameters `tem` running geometrically from 1 (the
+cold chain) down to `tem.min`. Neighbouring chains periodically propose to exchange states,
+with an acceptance ratio that depends only on the likelihoods and the tempering parameters
+because the priors cancel. The hot chains see a flattened likelihood and therefore roam over
+period aliases and over eccentricity, and replica exchange carries whatever they find down to
+the cold chain. Only the cold chain is returned, so the reported posterior is the untempered
+one. Each replica adapts both its proposal covariance and a step-size scale towards a 23 per
+cent acceptance rate, so no per-parameter tuning is required.
+
+The behaviour is controlled by the arguments of `mcfit()` and `sigfit()`:
+
+- `mcmc.method` - `'PT'` (default) for parallel tempering, or anything else to fall back to
+  the older sequential adaptive-tempering scheme in `hot_chain.R`.
+- `Ntem` - number of replicas in the ladder (default 8).
+- `tem.min` - tempering parameter of the hottest replica (default 1e-3).
+- `swap.interval` - iterations between replica-exchange sweeps (default 10).
+- `mcmc.verbose` - print per-replica acceptance rates, swap rates and step scales.
+
+## 5. Roadmap
 
 >Develop a R markdown code to visualize the results
 

@@ -14,20 +14,34 @@ Implemented in this session:
 - The previous residual-concatenation path is no longer used for 1D multi-set `BFP`/`MLP`.
 - Added `tests/test_multiset_periodogram.R`.
 
+Implemented in the following session:
+
+- Shared Keplerian fitting for multi-set data (`KeplerFit.multiset`, `multiset_kepler_*`).
+- Purely stochastic multi-set fitting (`multiset_noise_periodogram`), selected by passing
+  `noise.only=TRUE` to `BFP.multiset`.
+- `sigfit.multiset()` dispatches circular/Keplerian/stochastic for multi-set periodograms.
+- Parallel-tempering MCMC (`run.ptmcmc` in `mcmc_func.R`) is now the default sampler used to
+  constrain periodogram signals; `hot_chain.R` is kept behind `mcmc.method`.
+- Two latent bugs fixed on the way: `multiset_design()` used `model.matrix()` and failed for a
+  single data set, and `KeplerFit.multiset` has to read `per$df$data` because `sigfit()`
+  overwrites `per$data` with the unshifted input table.
+
 Remaining engineering targets:
 
 - Extend multi-set support to proxy terms.
-- Add multi-set Keplerian and MCMC refinement.
+- Extend MCMC refinement to multi-set fits.
 - Verify against section 2.6 of `paper/abfp/bkp/astro_periodogram2.pdf` if that paper tree is restored.
 
 Touched implementation points:
 
+- `mcmc_func.R`
 - `functions.R`
 - `periodoframe.R`
 - `server.R`
 - `README.md`
 - `ui.R`
 - `tests/test_multiset_periodogram.R`
+- `tests/test_ptmcmc.R`
 
 Tracking list:
 
