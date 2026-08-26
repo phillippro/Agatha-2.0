@@ -174,6 +174,13 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
         }
     })
 
+    output$nh <- renderUI({
+        if(is.null(input$per.type)) return()
+        if(any(input$per.type=='MLP'|input$per.type=='BFP')){
+            selectizeInput('Nh','Number of harmonics of the signal (2 or more fits eccentric orbits)',choices=1:4,selected=2,multiple=FALSE)
+        }
+    })
+
     output$mcf <- renderUI({
         if(is.null(input$per.type)) return()
 #        if(!is.null(data())){
@@ -623,6 +630,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
       }else{
           vals$Niter <- 0
       }
+      vals$Nh <- if(is.null(input$Nh)) 1 else as.integer(input$Nh)
       return(vals)
   })
 

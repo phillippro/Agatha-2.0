@@ -26,6 +26,16 @@ Implemented in the following session:
   single data set, and `KeplerFit.multiset` has to read `per$df$data` because `sigfit()`
   overwrites `per$data` with the unshifted input table.
 
+Implemented after that (Fourier/harmonic periodograms):
+
+- `Nh` harmonics in BFP/MLP/multi-set periodograms; the linear solves in `CircularSig` and
+  `par.integral` are now general-matrix (`marginal_logL`) and regression-tested against the
+  previous hand-written forms for `Nh=1`.
+- Analytical Keplerian seed from the fundamental and first harmonic (Delisle et al. 2016),
+  used by `KeplerFit`, `KeplerFit.multiset` and `par.a2m`.
+- Known limit: for `e >~ 0.9` the harmonic series converges slowly and `V1`, `V2` from sparse
+  data are biased; the seed is then flagged (`ok=FALSE`) and the numerical fit multi-starts.
+
 Remaining engineering targets:
 
 - Extend multi-set support to proxy terms.
@@ -42,6 +52,8 @@ Touched implementation points:
 - `ui.R`
 - `tests/test_multiset_periodogram.R`
 - `tests/test_ptmcmc.R`
+- `tests/test_fourier_kepler.R`
+- `additional_signals.R`
 
 Tracking list:
 

@@ -83,6 +83,7 @@ shinyUI(fluidPage(
                          helpText("There could be errors in the calculation of the BFP if the data is small (e.g. less than 20 data points) or not well sampled. "),
                          uiOutput('nar'),
                          uiOutput('nma'),
+                         uiOutput('nh'),
                          uiOutput('Inds'),
                          uiOutput('signal'),
                          uiOutput('mcf'),

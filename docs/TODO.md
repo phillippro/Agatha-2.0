@@ -25,6 +25,16 @@ Completed in the Keplerian, stochastic and PT-MCMC implementation:
    (`run.ptmcmc`) as the default MCMC, keeping the old path under `mcmc.method`.
 1. Added `tests/test_ptmcmc.R` and extended `tests/test_multiset_periodogram.R`.
 
+Completed in the Fourier/harmonic implementation (Delisle et al. 2016):
+
+1. `BFP`, `MLP` and the multi-set periodograms take `Nh` harmonics; `CircularSig` and
+   `par.integral` now build their normal equations / marginal likelihood from a general
+   design matrix (`marginal_logL`), which reproduces the previous closed forms for `Nh=1`.
+1. Analytical Keplerian elements from `V1`, `V2` (`fourier_to_kepler`, Hansen coefficients by
+   eq. A.6) seed `KeplerFit`, `KeplerFit.multiset` and the MCMC start.
+1. P/2P disambiguation at the peak (`harmonic_period_check`).
+1. Added `tests/test_fourier_kepler.R`.
+
 Remaining follow-up work:
 
 1. Extend the multi-set model to proxy terms.

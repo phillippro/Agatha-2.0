@@ -187,6 +187,7 @@ CircularSig <- function(par,df){
     m <- unlist(par[grepl('m\\d',names(par))])#
     l <- unlist(par[grepl('l\\d',names(par))])#
     sj <- par$sj
+    Nh <- if(is.null(df$Nh)) 1 else df$Nh
 
 #####notations
     W <- sum(1/(sj^2+dy^2))
@@ -206,16 +207,23 @@ CircularSig <- function(par,df){
         wp <- 1-m%*%es
         tp <- t-m%*%(es*df$ts)
         if(type=='period'){
-            cp <- cos(omega*t)-m%*%(es*df$cs)
-            sp <- sin(omega*t)-m%*%(es*df$ss)
+###MA-corrected harmonic columns; df$hcs/hss hold the lagged cos/sin per harmonic
+            hcols <- c()
+            for(k in 1:Nh){
+                hcols <- cbind(hcols,as.numeric(cos(k*omega*t)-m%*%(es*df$hcs[[k]])),
+                               as.numeric(sin(k*omega*t)-m%*%(es*df$hss[[k]])))
+            }
+            cp <- hcols[,1]
+            sp <- hcols[,2]
         }
     }else{
         yp <- y
         wp <- 1
         tp <- t
         if(type=='period'){
-            cp <- cos(omega*t)
-            sp <- sin(omega*t)
+            hcols <- harmonic_columns(t,omega,Nh)
+            cp <- hcols[,1]
+            sp <- hcols[,2]
         }
     }
 #    cat('head(m%*%(es*df$ys))=',head(m%*%(es*df$ys)),'\n')
@@ -290,34 +298,13 @@ CircularSig <- function(par,df){
         }
 ###optimized parameterse for the trend model
     }else if(type=='period'){
-#####calculate the optimal white noise model parameters:gamma,beta,dj
-        lin.mat <- c()
-        if(NI>0){
-            for(j in 1:(4+NI)){
-                if(j==1){
-                    lin.mat <- rbind(lin.mat,c(CCp,CSp,CWp,CTp,CIp))
-                }
-                if(j==2){
-                    lin.mat <- rbind(lin.mat,c(CSp,SSp,SWp,STp,SIp))
-                }
-                if(j==3){
-                    lin.mat <- rbind(lin.mat,c(CWp,SWp,WWp,WTp,WIp))
-                }
-                if(j==4){
-                    lin.mat <- rbind(lin.mat,c(CTp,STp,WTp,TTp,TIp))
-                }
-                if(j>4){
-                    lin.mat <- rbind(lin.mat,c(CIp[j-4],SIp[j-4],WIp[j-4],TIp[j-4],IIp[j-4,]))
-                }
-            }
-            vec.rh <- c(YCp,YSp,YWp,YTp,YIp)
-        }else{
-            lin.mat <- rbind(lin.mat,c(CCp,CSp,CWp,CTp))
-            lin.mat <- rbind(lin.mat,c(CSp,SSp,SWp,STp))
-            lin.mat <- rbind(lin.mat,c(CWp,SWp,WWp,WTp))
-            lin.mat <- rbind(lin.mat,c(CTp,STp,WTp,TTp))
-            vec.rh <- c(YCp,YSp,YWp,YTp)
-        }
+#####optimal white-noise parameters [harmonics, gamma, beta, dj] from the
+#####weighted normal equations; for Nh=1 this is the system that used to be
+#####written out element by element
+        Xp <- cbind(hcols,rep_len(as.numeric(wp),length(t)),as.numeric(tp))
+        if(NI>0) Xp <- cbind(Xp,t(ip))
+        lin.mat <- t(Xp)%*%(w*Xp)
+        vec.rh <- as.numeric(t(Xp)%*%(w*as.numeric(yp)))
     }
     white.par <- solve.try(lin.mat,vec.rh)
     ind0 <- length(white.par)-NI-1
@@ -327,7 +314,9 @@ CircularSig <- function(par,df){
         r <- r+yproxy
     }
     if(type=='period'){
-        ysig <- white.par[1]*cos(omega*t)+white.par[2]*sin(omega*t)
+###the amplitudes were solved with MA-corrected columns, but the prediction is
+###built from the raw harmonics: the MA term is added to r below
+        ysig <- as.numeric(harmonic_columns(t,omega,Nh)%*%white.par[1:(2*Nh)])
         r <- r+ysig
     }
 
@@ -702,7 +691,7 @@ CircularRes <- function(par,df){
 }
 
 ######express other parameters as functions of correlated noise parameters, optimize correlated noise parameters using the LM algorithm
-sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,start,noise.only,GP,gp.par,Nrep=1){
+sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,start,noise.only,GP,gp.par,Nrep=1,Nh=1){
     par.fix <- list()
     if(type=='period'){
         par.fix <- list(omega=omega,phi=phi)
@@ -723,6 +712,7 @@ sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,star
         NI <- ncol(Indices)
     }
     ts <- cs <- ys <- ya <- ss <- c()
+    hcs <- hss <- vector('list',Nh)
     t <- data[,1]
     y <- data[,2]
     dy <- data[,3]
@@ -738,10 +728,14 @@ sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,star
             ti <- c(rep(0,i),t[-(length(t)+1-(1:i))])
             ts <- rbind(ts,ti)
             if(type=='period'){
-                ci <- c(rep(0,i),cos(omega*t[-(length(t)+1-(1:i))]))
-                cs <- rbind(cs,ci)
-                si <- c(rep(0,i),sin(omega*t[-(length(t)+1-(1:i))]))
-                ss <- rbind(ss,si)
+                for(k in 1:Nh){
+                    ci <- c(rep(0,i),cos(k*omega*t[-(length(t)+1-(1:i))]))
+                    si <- c(rep(0,i),sin(k*omega*t[-(length(t)+1-(1:i))]))
+                    hcs[[k]] <- rbind(hcs[[k]],ci)
+                    hss[[k]] <- rbind(hss[[k]],si)
+                }
+                cs <- hcs[[1]]
+                ss <- hss[[1]]
             }
             if(NI==1){
                 Is[i,,] <- c(rep(0,i*NI),Indices[-(length(t)+1-(1:i)),1])
@@ -756,7 +750,7 @@ sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,star
             ya <- rbind(ya,yi)
         }
     }
-    df <- list(data=data,Indices=Indices,par.fix=par.fix,Nma=Nma,Nar=Nar,NI=NI,type=type,ts=ts,cs=cs,ss=ss,Is=Is,ys=ys,GP=GP,ya=ya)
+    df <- list(data=data,Indices=Indices,par.fix=par.fix,Nma=Nma,Nar=Nar,NI=NI,type=type,ts=ts,cs=cs,ss=ss,hcs=hcs,hss=hss,Nh=Nh,Is=Is,ys=ys,GP=GP,ya=ya)
     if(GP){
         if(!is.na(gp.par[1])){
             df$sigmaGP <- gp.par[1]
@@ -798,7 +792,7 @@ sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,star
     nams <- c('gamma','beta')
     if(NI>0) nams <- c(nams,paste0('d',1:NI))
 #if(type=='period' | (GP & noise.only)) nams <- c('A','B',nams)
-    if(type=='period') nams <- c('A','B',nams)
+    if(type=='period') nams <- c(harmonic_names(Nh),nams)
     names(tmp$par) <- nams
     opt.par <- c(unlist(tmp$par),opt.par)
 ####model prediction and chi2
@@ -811,7 +805,7 @@ sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,star
     return(list(df=df,res=res,res.sig=res.sig,noise=yp.noise,logL=logL,lnls=lnls,par=opt.par,par0=opt.par0,par.low=par.low,par.up=par.up,ysig=ysig,yfull=yp.full))
 }
 
-par.integral <- function(data,Indices=NULL,sj,m,d,type='noise',logtau=NULL,omega=NULL,Nma=0, Nar=0){
+par.integral <- function(data,Indices=NULL,sj,m,d,type='noise',logtau=NULL,omega=NULL,Nma=0, Nar=0,Nh=1){
     if(is.null(Indices)){
         dI <- 0
         NI <- 0
@@ -875,51 +869,20 @@ par.integral <- function(data,Indices=NULL,sj,m,d,type='noise',logtau=NULL,omega
     logL0 <- log(2*pi/sqrt(WWp*TTp-WTp^2))-log(W)+W*(((YTp*WWp-WTp*YWp)^2/(WWp*TTp-WTp^2)+YWp^2-YYp*WWp)/(2*WWp))
     logLp <- logL <- logL0
     if(type=='period'){
-###determine phase to eliminate CS
-        if(Nma>0){
-            cc <- colSums(c*cos(omega*ts))
-            ss <- colSums(c*sin(omega*ts))
-        }else{
-            ss <- cc <- 0
+###marginalize over [harmonics, offset, trend]; the MA correction of each
+###harmonic column is the same as the one previously applied to cos/sin only
+        hc <- c()
+        for(k in 1:Nh){
+            if(Nma>0){
+                cc <- colSums(c*cos(k*omega*ts))
+                ss <- colSums(c*sin(k*omega*ts))
+            }else{
+                cc <- ss <- 0
+            }
+            hc <- cbind(hc,cos(k*omega*t)-cc,sin(k*omega*t)-ss)
         }
-        CCpp <- sum(w*(cos(omega*t)-cc)^2)
-        SSpp <- sum(w*(sin(omega*t)-ss)^2)
-        CSpp <- sum(w*(sin(omega*t)-ss)*(cos(omega*t)-cc))
-        phi <- 0.5*atan(2*CSpp/(CCpp-SSpp))
-        phip <- 0.5*atan(sum(w*sin(2*omega*t))/sum(w*cos(2*omega*t)))
-###define notations using the determined phase
-        if(Nma>0){
-            cc <- colSums(c*cos(omega*ts-phi))
-            ss <- colSums(c*sin(omega*ts-phi))
-        }else{
-            ss <- cc <- 0
-        }
-        cp <- cos(omega*t-phi)-cc
-        sp <- sin(omega*t-phi)-ss
-        Cp <- sum(w*cp)
-        Sp <- sum(w*sp)
-        CCp <- sum(w*cp^2)
-        SSp <- sum(w*sp^2)
-        CSp <- sum(w*sp*cp)
-        CTp <- sum(w*cp*tp)
-        STp <- sum(w*sp*tp)
-        CWp <- sum(w*cp*wp)
-        SWp <- sum(w*sp*wp)
-        YCp <- sum(w*yp*cp)
-        YSp <- sum(w*yp*sp)
-        U <- WWp-CWp^2/CCp-SWp^2/SSp
-        R <- CWp*CTp/CCp+SWp*STp/SSp-WTp
-        Q <- YWp-CWp*YCp/CCp-SWp*YSp/SSp
-        V <- CCp*SSp*TTp*U-SSp*CTp^2*U-CCp*STp^2*U-CCp*SSp*R^2
-        if(V<=0){
-            cat('V=',V,'is not positive for f=',omega/(2*pi),'!\n')
-#            V <- V+1e-30
-            cat('Q=',Q,'\n')
-            cat('U=',U,'\n')
-            cat('R=',R,'\n')
-        }
-        X <- SSp*YCp^2*U+CCp*YSp^2*U-YYp*CCp*SSp*U+CCp*SSp*Q^2
-        logL <- log((2*pi)^2/sqrt(abs(V)))-2*log(W)+W*((X+(CCp*SSp*YTp*U-YCp*CTp*SSp*U-YSp*STp*CCp*U+CCp*SSp*Q*R)^2/V)/(2*CCp*SSp*U))
+        Xp <- cbind(hc,rep_len(as.numeric(wp),length(t)),as.numeric(tp))
+        logL <- marginal_logL(Xp,as.numeric(yp),w,W)
     }
     return(list(logL0=logL0,logL=logL,logLp=logLp))
 }
@@ -1125,7 +1088,7 @@ multiset_lag_terms <- function(y, set.id, Nar=0, Nma=0, residuals=NULL, t=NULL, 
     return(terms)
 }
 
-multiset_design <- function(t, set.id, omega=NULL, trend=TRUE, lag.terms=NULL){
+multiset_design <- function(t, set.id, omega=NULL, trend=TRUE, lag.terms=NULL, Nh=1){
     set.id <- factor(set.id)
     levs <- levels(set.id)
 ###built directly rather than with model.matrix so that a single data set works too
@@ -1140,16 +1103,16 @@ multiset_design <- function(t, set.id, omega=NULL, trend=TRUE, lag.terms=NULL){
         design <- cbind(design, lag.terms)
     }
     if(!is.null(omega)){
-        design <- cbind(A=cos(omega*t), B=sin(omega*t), design)
+        design <- cbind(harmonic_columns(t,omega,Nh), design)
     }
     return(design)
 }
 
 multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE, Nar=0, Nma=0, residuals=NULL,
-                         tau=NULL, tauAR=NULL, signal=NULL){
+                         tau=NULL, tauAR=NULL, signal=NULL, Nh=1){
     lag.terms <- multiset_lag_terms(y=y,set.id=set.id,Nar=Nar,Nma=Nma,residuals=residuals,
                                     t=t,tau=tau,tauAR=tauAR)
-    X <- multiset_design(t=t,set.id=set.id,omega=omega,trend=trend,lag.terms=lag.terms)
+    X <- multiset_design(t=t,set.id=set.id,omega=omega,trend=trend,lag.terms=lag.terms,Nh=Nh)
     if(!is.null(signal)){
         X <- cbind(signal,X)
     }
@@ -1165,7 +1128,7 @@ multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE, Nar=0, Nma=0,
 
 multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NA,
                                  tspan=NULL, sampling='combined', section=1,
-                                 trend=TRUE, max.iter=3){
+                                 trend=TRUE, max.iter=3, Nh=1){
     unit <- 1
     t <- (t-min(t))/unit
     set.id <- factor(set.id)
@@ -1192,30 +1155,47 @@ multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NU
     opt.pars <- c()
     yfits <- matrix(NA,nrow=length(t),ncol=length(omegas))
     residuals <- matrix(NA,nrow=length(t),ncol=length(omegas))
-    for(kk in 1:length(omegas)){
-        fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=omegas[kk],trend=trend,Nar=Nar,Nma=Nma,residuals=base$res)
+    fit.at <- function(om){
+        fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=om,trend=trend,Nar=Nar,Nma=Nma,residuals=base$res,Nh=Nh)
         if(any(as.integer(Nma)>0)){
             for(iter in 1:max.iter){
-                fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=omegas[kk],trend=trend,Nar=Nar,Nma=Nma,residuals=fit$res)
+                fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=om,trend=trend,Nar=Nar,Nma=Nma,residuals=fit$res,Nh=Nh)
             }
         }
+        fit
+    }
+    for(kk in 1:length(omegas)){
+        fit <- fit.at(omegas[kk])
         logLs[kk] <- fit$logL
         opt.pars <- rbind(opt.pars,fit$coef)
         yfits[,kk] <- fit$yfit
         residuals[,kk] <- fit$res
     }
     Ndata <- length(t)
-    Nextra <- 2
+###two amplitudes per fitted harmonic
+    Nextra <- 2*Nh
     logBF <- logLs-base$logL-Nextra/2*log(Ndata)
     inds <- sort(logBF,decreasing=TRUE,index.return=TRUE)$ix
     P <- unit/f
     Popt <- P[inds[1]]
     opt.par <- opt.pars[inds[1],]
     opt.par.top <- opt.pars[inds[1:min(10,length(inds))],,drop=FALSE]
-    omega.opt <- 2*pi/Popt
-    ysig <- as.numeric(opt.par['A']*cos(omega.opt*t)+opt.par['B']*sin(omega.opt*t))
     yfull <- yfits[,inds[1]]
     res <- residuals[,inds[1]]
+    if(Nh>1){
+###resolve the P/2P ambiguity of a multi-harmonic fit at the peak
+        P1 <- harmonic_period_check(opt.par,Popt)
+        if(P1!=Popt){
+            Popt <- P1
+            fit <- fit.at(2*pi/P1)
+            opt.par <- fit$coef
+            opt.par.top[1,] <- opt.par
+            yfull <- fit$yfit
+            res <- fit$res
+        }
+    }
+    omega.opt <- 2*pi/Popt
+    ysig <- harmonic_signal(opt.par,omega.opt,t)
     ps <- P[inds[1:min(5,length(inds))]]
     power.opt <- logBF[inds[1:min(5,length(inds))]]
     df <- list(data=data,set.id=set.id,multi_set=TRUE,Nma=Nma,Nar=Nar,NI=0,type='period')
@@ -1230,7 +1210,7 @@ multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NU
 
 BFP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NA,
                          tspan=NULL, sampling='combined', section=1, progress=FALSE,
-                         noise.only=FALSE){
+                         noise.only=FALSE, Nh=1){
     if(noise.only & !any(as.integer(Nma)>0) & !any(as.integer(Nar)>0)){
         warning('A purely stochastic multi-set fit needs at least one AR or MA component; fitting the periodic model instead.')
         noise.only <- FALSE
@@ -1241,16 +1221,16 @@ BFP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin
                                           section=section,trend=TRUE))
     }
     multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmax=fmax,fmin=fmin,
-                         tspan=tspan,sampling=sampling,section=section,trend=TRUE)
+                         tspan=tspan,sampling=sampling,section=section,trend=TRUE,Nh=Nh)
 }
 
 MLP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NULL,
-                         tspan=NULL, sampling='combined', section=1){
+                         tspan=NULL, sampling='combined', section=1, Nh=1){
     if(is.null(fmin)){
         fmin <- NA
     }
     out <- multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmax=fmax,fmin=fmin,
-                                tspan=tspan,sampling=sampling,section=section,trend=TRUE)
+                                tspan=tspan,sampling=sampling,section=section,trend=TRUE,Nh=Nh)
     out$power <- out$power-max(out$power)
     out$logBF <- out$power
     return(out)
@@ -1362,6 +1342,12 @@ KeplerFit.multiset <- function(per, frac=0.2, emax=0.95, max.iter=3){
     e.start <- c(0,0.1,0.3,0.5,0.7)
     Mo.start <- ((-phi)+seq(0,2*pi,length.out=5)[-5])%%(2*pi)
     starts <- as.matrix(expand.grid(P=Popt,e=e.start,Mo=Mo.start))
+###seed from the analytical Fourier solution when the periodogram fitted the
+###first harmonic (Delisle et al. 2016); the grid stays as a safety net
+    seed <- fourier_kepler_seed(par.opt,Popt)
+    if(!is.null(seed)){
+        starts <- rbind(c(Popt,min(seed$e1,emax),seed$Mo1),starts)
+    }
     lower <- c(Plow,0,0)
     upper <- c(Pup,emax,2*pi)
     lls <- c()
@@ -1472,8 +1458,152 @@ multiset_noise_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, f
                 multi_set=TRUE,noise_only=TRUE,set.id=set.id,trend=trend,Nma=Nma,Nar=Nar))
 }
 
+###########################################################################
+####Fourier decomposition of a Keplerian RV signal and analytical orbital
+####elements, following Delisle, Segransan, Buchschacher & Alesina 2016,
+####A&A 590, A134 (Paper I). Equation numbers refer to that paper.
+####
+####  V(t) = sum_k V_k exp(i k n t),  V_k = K/2 exp(i k M0)(X_k e^{iw} + X_{-k} e^{-iw})   (5),(9)
+####
+####A periodogram with harmonics cos(k n t), sin(k n t), k=1..Nh, keeps the power
+####that an eccentric orbit moves out of the fundamental (Paper II, Fig. 2), and
+####the fitted fundamental and first harmonic give K, e, w, M0 analytically.
+###########################################################################
+harmonic_names <- function(Nh){
+###A,B are kept for the fundamental so existing code that reads them still works
+    n <- c('A','B')
+    if(Nh>1) for(k in 2:Nh) n <- c(n,paste0(c('A','B'),k))
+    n
+}
+
+harmonic_columns <- function(t, omega, Nh=1){
+    X <- c()
+    for(k in 1:Nh) X <- cbind(X,cos(k*omega*t),sin(k*omega*t))
+    colnames(X) <- harmonic_names(Nh)
+    X
+}
+
+harmonic_signal <- function(par, omega, t){
+###sum of all harmonics present in par
+    par <- unlist(par)
+    ys <- rep(0,length(t))
+    k <- 1
+    repeat{
+        a <- if(k==1) 'A' else paste0('A',k)
+        b <- if(k==1) 'B' else paste0('B',k)
+        if(!all(c(a,b)%in%names(par))) break
+        ys <- ys+par[[a]]*cos(k*omega*t)+par[[b]]*sin(k*omega*t)
+        k <- k+1
+    }
+    ys
+}
+
+par_to_V <- function(par){
+###linear coefficients of cos, sin -> complex Fourier coefficients V_1, V_2  (57),(58)
+    par <- unlist(par)
+    V1 <- (par[['A']]-1i*par[['B']])/2
+    V2 <- if(all(c('A2','B2')%in%names(par))) (par[['A2']]-1i*par[['B2']])/2 else NA
+    list(V1=V1,V2=V2)
+}
+
+harmonic_period_check <- function(par, P){
+###A multi-harmonic periodogram is ambiguous between P and 2P: a signal with its
+###fundamental at P fits a 2P model through the first-harmonic columns. If the
+###fitted first harmonic dominates the fundamental the true period is P/2.
+    V <- par_to_V(par)
+    if(is.na(V$V2)) return(P)
+    if(Mod(V$V2)>Mod(V$V1)) P/2 else P
+}
+
+hansen_X <- function(k, e, N=100){
+###Hansen coefficient X_k^{0,1}(e) by the rectangle rule of eq. (A.6); the
+###integrand is periodic so this is spectrally accurate. N=100 is the optimum
+###of Fig. A.1 (round-off accumulates beyond ~300).
+    E <- 2*pi*(0:(N-1))/N
+    z <- (cos(E)-e+1i*sqrt(1-e^2)*sin(E))*exp(-1i*k*(E-e*sin(E)))
+    Re(mean(z))
+}
+
+fourier_V <- function(K, e, omega, M0){
+###V_1 and V_2 of eq. (9) for given elements
+    Vk <- function(k) K/2*exp(1i*k*M0)*(hansen_X(k,e)*exp(1i*omega)+hansen_X(-k,e)*exp(-1i*omega))
+    c(Vk(1),Vk(2))
+}
+
+fourier_to_kepler <- function(V1, V2, refine=2){
+###Analytical K, e, omega, M0 from the complex Fourier coefficients of the
+###fundamental (V1) and first harmonic (V2), refined by Newton-Raphson.
+###ok=FALSE flags the case of Sect. 4 where |V2/V1| exceeds what any Keplerian
+###allows (noise or sampling): the returned elements are then only a rough
+###high-e guess and the caller should multi-start its numerical fit.
+    V1 <- unname(V1)
+    V2 <- unname(V2)
+    if(Mod(V1)==0) return(list(K=0,e=0,omega=0,M0=0,lambda0=0,ok=FALSE))
+    rho <- V2/V1                                          # (14)
+    omega0 <- -Arg(V2/V1^2)                               # (26)-(28)
+    Cw <- (1-exp(-2i*omega0)/6)/4                         # (20)
+    ReC <- Re(Cw)
+    r <- Mod(rho)
+    ok <- TRUE
+    if(r>1-ReC){
+        r <- 1-ReC
+        ok <- FALSE
+    }
+    x <- min(max(3*sqrt(3*ReC)*r/2,-1),1)
+    e <- 2/sqrt(3*ReC)*cos((pi+acos(x))/3)                # (24)
+    e <- min(max(e,0),if(ok) 0.999 else 0.9)
+    M0 <- Arg(rho/(e-Cw*e^3))                             # (25)
+    X1 <- hansen_X(1,e); Xm1 <- hansen_X(-1,e)
+    u <- V1*exp(-1i*M0)
+    Kc <- 2*Re(u)/(X1+Xm1)                                # (33)
+    Ks <- 2*Im(u)/(X1-Xm1)                                # (34)
+    x <- c(K=sqrt(Kc^2+Ks^2),e=e,omega=atan2(Ks,Kc),M0=M0)
+###Newton-Raphson on y=(Re V1, Im V1, Re V2, Im V2)  (38)-(40), finite-difference Jacobian
+    y <- c(Re(V1),Im(V1),Re(V2),Im(V2))
+    yfun <- function(x){ V <- fourier_V(x['K'],x['e'],x['omega'],x['M0']); c(Re(V[1]),Im(V[1]),Re(V[2]),Im(V[2])) }
+    if(refine>0){
+        for(it in 1:refine){
+            yhat <- yfun(x)
+            J <- matrix(NA,4,4)
+            h <- c(1e-4*max(x['K'],1e-8),1e-5,1e-5,1e-5)
+            for(j in 1:4){ xp <- x; xp[j] <- xp[j]+h[j]; J[,j] <- (yfun(xp)-yhat)/h[j] }
+            dx <- try(solve(J,y-yhat),TRUE)
+            if(class(dx)[1]=='try-error') break
+            xn <- x+dx
+            if(!is.finite(xn['e']) || xn['e']<0 || xn['e']>=0.999 || xn['K']<=0) break
+            x <- xn
+        }
+    }
+    list(K=as.numeric(x['K']),e=as.numeric(x['e']),omega=as.numeric(x['omega']%%(2*pi)),
+         M0=as.numeric(x['M0']%%(2*pi)),lambda0=as.numeric((x['M0']+x['omega'])%%(2*pi)),ok=ok)
+}
+
+fourier_kepler_seed <- function(par, P){
+###Keplerian seed in Agatha's parameter names from a periodogram fit with at
+###least two harmonics; NULL when only the fundamental was fitted
+    V <- par_to_V(par)
+    if(is.na(V$V2)) return(NULL)
+    f <- fourier_to_kepler(V$V1,V$V2)
+    list(P1=P,K1=f$K,e1=f$e,omega1=f$omega,Mo1=f$M0,ok=f$ok)
+}
+
+marginal_logL <- function(X, y, w, W){
+###log marginal likelihood of a linear Gaussian model with flat priors on the
+###p coefficients, weights w (normalized to sum 1) and total weight W:
+###  log((2pi)^{p/2}/sqrt(det M)) - (p/2) log W + (W/2)(b' M^{-1} b - y'wy),
+###M = X'wX, b = X'wy. For p=2 and p=4 this is the closed form previously
+###written out by hand in par.integral().
+    p <- ncol(X)
+    M <- t(X)%*%(w*X)
+    b <- as.numeric(t(X)%*%(w*y))
+    Mb <- solve.try(M,b)
+    if(class(Mb)[1]=='try-error') return(-Inf)
+    d <- abs(det(M))
+    p/2*log(2*pi)-0.5*log(d)-p/2*log(W)+W/2*(sum(b*Mb)-sum(w*y^2))
+}
+
 ####Marginalized likelihood periodogram
-MLP <- function(t, y, dy, Nma=0, Nar=0,mar.type='part',sj=0,logtau=NULL,ofac=1,fmax=NULL,fmin=NULL,tspan=NULL,model.type='MA',opt.par=NULL,Indices=NULL,MLP.type='sub',sampling='combined',section=1, GP=FALSE,gp.par=NULL,noise.only=FALSE,Nsamp=5){
+MLP <- function(t, y, dy, Nma=0, Nar=0,mar.type='part',sj=0,logtau=NULL,ofac=1,fmax=NULL,fmin=NULL,tspan=NULL,model.type='MA',opt.par=NULL,Indices=NULL,MLP.type='sub',sampling='combined',section=1, GP=FALSE,gp.par=NULL,noise.only=FALSE,Nsamp=5,Nh=1){
 #    save(list=ls(all=TRUE),file='test.Robj')
     if(Nma==0 & Nar==0 & !GP) noise.only <- FALSE
     if(noise.only) quantify <- FALSE
@@ -1550,7 +1680,7 @@ MLP <- function(t, y, dy, Nma=0, Nar=0,mar.type='part',sj=0,logtau=NULL,ofac=1,f
     logLp <- rep(NA,length(omegas))
     for(kk in 1:length(f)){
         omega <- omegas[kk]
-        tmp <- par.integral(data,Indices,sj=sj,m=m,d=d,type='period',logtau=logtau,omega=omega,Nma=Nma,Nar=Nar)
+        tmp <- par.integral(data,Indices,sj=sj,m=m,d=d,type='period',logtau=logtau,omega=omega,Nma=Nma,Nar=Nar,Nh=Nh)
         logL1 <- tmp$logL0#signal dependent noise model log likelihood
         logL <- tmp$logL#likelihood for the full model for f=f[k]
         logLp[kk] <- tmp$logLp
@@ -1563,12 +1693,23 @@ MLP <- function(t, y, dy, Nma=0, Nar=0,mar.type='part',sj=0,logtau=NULL,ofac=1,f
     omega.opt <- 2*pi*(f[which.max(logBF)]/unit)
 ####optimized parameter
     vars <- global.notation(t,y,dy,Nma=Nma,Nar=Nar,Indices=Indices,GP=GP,gp.par=gp.par)
-    tmp <- sopt(omega=omega.opt,phi=0,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars$par.low,par.up=vars$par.up,start=vars$start,noise.only=FALSE,GP=FALSE,gp.par=rep(NA,3),Nrep=Nsamp)#
+    tmp <- sopt(omega=omega.opt,phi=0,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars$par.low,par.up=vars$par.up,start=vars$start,noise.only=FALSE,GP=FALSE,gp.par=rep(NA,3),Nrep=Nsamp,Nh=Nh)#
     opt.par <- tmp$par
     inds <- sort(logBF,decreasing=TRUE,index.return=TRUE)$ix
+    Popt <- P[inds[1]]
+    if(Nh>1){
+###resolve the P/2P ambiguity of a multi-harmonic fit at the peak
+        P1 <- harmonic_period_check(opt.par,Popt)
+        if(P1!=Popt){
+            Popt <- P1
+            omega.opt <- 2*pi/P1
+            tmp <- sopt(omega=omega.opt,phi=0,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars$par.low,par.up=vars$par.up,start=vars$start,noise.only=FALSE,GP=FALSE,gp.par=rep(NA,3),Nrep=Nsamp,Nh=Nh)
+            opt.par <- tmp$par
+        }
+    }
     ps <- P[inds[1:5]]
     power.opt <- logBF[inds[1:5]]
-    return(list(data=data,P=unit/f, Popt=P[inds[1]],logp=power, ps=ps,power.opt=power.opt,logBF.opt=logBF[ind],logBF=logBF,power=logBF,logBF.noise=logBF.noise,Nma=Nma,Nar=Nar,NI=NI,par.opt=opt.par,res=tmp$res,sig.level=log(c(10,100,1000)),ParLow=vars$par.low,ParUp=vars$par.up,df=tmp$df))
+    return(list(data=data,P=unit/f, Popt=Popt,logp=power, ps=ps,power.opt=power.opt,logBF.opt=logBF[ind],logBF=logBF,power=logBF,logBF.noise=logBF.noise,Nma=Nma,Nar=Nar,NI=NI,par.opt=opt.par,res=tmp$res,sig.level=log(c(10,100,1000)),ParLow=vars$par.low,ParUp=vars$par.up,df=tmp$df))
 }
 
 #####BFP-based model inference/selection
@@ -2263,7 +2404,7 @@ show.peaks <- function(ps,powers,levels=NULL,Nmax=5){
     return(cbind(pms,pos))
 }
 
-BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,tspan=NULL,sampling='combined',model.type='man',progress=TRUE,quantify=FALSE,dP=0.1,section=1,GP=FALSE,gp.par=rep(NA,3),noise.only=FALSE,Nsamp=1,par.opt=NULL,renew=TRUE,sj=0){
+BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,tspan=NULL,sampling='combined',model.type='man',progress=TRUE,quantify=FALSE,dP=0.1,section=1,GP=FALSE,gp.par=rep(NA,3),noise.only=FALSE,Nsamp=1,par.opt=NULL,renew=TRUE,sj=0,Nh=1){
 ###gp.par is the free parameters of SHO-GP
     if(FALSE){
         cat('head(t)=',head(t),'\n')
@@ -2357,7 +2498,8 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
             Nextra <- Nextra+2*Nar
         }
     }else{
-        Nextra <- 2
+###two amplitudes per fitted harmonic
+        Nextra <- 2*Nh
     }
     omegas.all <- c()
     opt.pars <- array(NA,dim=c(length(f),Npar+Nextra))
@@ -2389,7 +2531,7 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
                     }else{
                         tmp <- local.notation(t,y,dy,Indices,NI,omega,phi)
                         vars1 <- c(vars1,tmp)
-                        opt <- sopt(omega=omega,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=vars1$start,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=Nrep)
+                        opt <- sopt(omega=omega,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=vars1$start,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=Nrep,Nh=Nh)
                     }
                     if(renew){
                         vars1$start <- opt$par0
@@ -2428,7 +2570,7 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
                 }else{
                     tmp <- local.notation(t,y,dy,Indices,NI,omega,phi)
                     vars1 <- c(vars1,tmp)
-                    opt <- sopt(omega=omega,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=vars1$start,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=Nrep)
+                    opt <- sopt(omega=omega,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=vars1$start,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=Nrep,Nh=Nh)
                 }
                 if(renew){
                     vars1$start <- opt$par0
@@ -2500,6 +2642,18 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
     opt.par <- opt.pars[inds,]
     par.opt <- opt.pars[inds[1],]
     logBF.opt <- logBF[inds]
+    if(Nh>1 & !noise.only){
+###resolve the P/2P ambiguity of a multi-harmonic fit at the peak
+        P1 <- harmonic_period_check(par.opt,Popt[1])
+        if(P1!=Popt[1]){
+            omega1 <- 2*pi/P1
+            vars1 <- c(vars1,local.notation(t,y,dy,Indices,NI,omega1,phi))
+            opt1 <- sopt(omega=omega1,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=vars1$start,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=Nrep,Nh=Nh)
+            Popt[1] <- Popts[1] <- P1
+            par.opt <- unlist(opt1$par)
+            opt.par[1,] <- par.opt
+        }
+    }
 
 ####calculate the residual
     par.fix <- list(omega=2*pi/Popt[1],phi=0)
@@ -2518,7 +2672,7 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
     names(pp) <- colnames(opt.pars)
     yall <- as.numeric(CircularSig(pp,df)$v)
     if(!noise.only){
-        ysig <- pp$A*cos(2*pi/Popt[1]*t)+pp$B*sin(2*pi/Popt[1]*t)
+        ysig <- harmonic_signal(pp,2*pi/Popt[1],t)
         ysigt <- ysig+pp$gamma+pp$beta*t
     }else{
         ysig <- ysigt <- rep(0,length(t))
@@ -2550,7 +2704,7 @@ Circ2kep <- function(per,basis='linear'){
 #    if(is.null(dim(per$par.opt))) per$par.opt <- t(per$par.opt)
     PhiOpt <- as.numeric(xy2phi(per$par.opt['A'],per$par.opt['B']))
     Kopt <- as.numeric(sqrt(per$par.opt['A']^2+per$par.opt['B']^2))
-    ind <- which(names(per$par.opt)!='A' & names(per$par.opt)!='B')
+    ind <- which(!names(per$par.opt)%in%harmonic_names(10))
     ParLow <- per$ParLow
     ParUp <- per$ParUp
     ParOpt <- per$par.opt[ind]
@@ -2684,7 +2838,8 @@ KeplerFit <- function(per,data,basis='natural'){
 ###original prediction
     PhiOpt <- as.numeric(xy2phi(per$par.opt[1,'A'],per$par.opt[1,'B']))
     Kopt <- as.numeric(sqrt(per$par.opt[1,'A']^2+per$par.opt[1,'B']^2))
-    ind <- which(colnames(per$par.opt)!='A' & colnames(per$par.opt)!='B')
+###all harmonic amplitudes are replaced by the Keplerian parameters
+    ind <- which(!colnames(per$par.opt)%in%harmonic_names(10))
     if(is.null(per$ParLow)){
 #        vars <- global.notation(per$data[,1],per$data[,2],per$data[,3],Nma=0,Nar=0,Indices=NA,GP=FALSE,gp.par=FALSE)
 #        ParLow <- vars$par.low
@@ -2732,13 +2887,32 @@ KeplerFit <- function(per,data,basis='natural'){
         ParLow <- c(P1=(1-frac)*Popt,K1=(1-frac)*Kopt,esinw1=-sqrt(2)/2,ecosw1=-sqrt(2)/2,Tc1=min(t),ParOpt-frac*(ParUp0-ParLow0))
         ParUp <- c(P1=(1+frac)*Popt,K1=(1+frac)*Kopt,esinw1=sqrt(2)/2,ecosw1=sqrt(2)/2,Tc1=min(t)+(1+frac)*Popt,ParOpt+frac*(ParUp0-ParLow0))
     }
-    Ntry <- 100
+###analytical seed from the fundamental and first harmonic when the periodogram
+###fitted them (Delisle et al. 2016); the circular amplitude underestimates K
+###for an eccentric orbit, so the K range is widened around the seed
+    seed <- NULL
+    if(basis=='natural' && all(c('A2','B2')%in%colnames(per$par.opt))){
+        seed <- fourier_kepler_seed(per$par.opt[1,],Popt)
+        if(!is.null(seed) && is.finite(seed$K1) && seed$K1>0){
+            ParLow['K1'] <- min(ParLow['K1'],0.5*seed$K1)
+            ParUp['K1'] <- max(ParUp['K1'],2*seed$K1)
+        }else{
+            seed <- NULL
+        }
+    }
+    Ntry <- if(!is.null(seed) && seed$ok) 20 else 100
     pars <- c()
     ll <- c()
     n <- 1
     for(j in 1:Ntry){
         ParIni <- runif(length(ParLow),ParLow,ParUp)
         names(ParIni) <- names(ParLow)
+        if(!is.null(seed) && j<=2){
+###first start at the analytical solution, second at its circular counterpart
+            ParIni[c('P1','K1','e1','omega1','Mo1')] <- c(Popt,seed$K1,if(j==1) seed$e1 else 0,seed$omega1,seed$Mo1)
+            ParIni[names(ParOpt)] <- ParOpt
+            ParIni <- pmin(pmax(ParIni,ParLow+1e-9),ParUp-1e-9)
+        }
         ParIni <- as.list(ParIni)
 #    df <- list(data=tmp,Indices=Indices,par.fix=par.fix,Nma=Nma,NI=NI,GP=GP)
         if(!is.null(per$df)){

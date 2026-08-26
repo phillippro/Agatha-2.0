@@ -147,6 +147,9 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
     if(Ncores>0) {registerDoMC(Ncores)} else {registerDoMC()}
     Nmas <- unlist(Nmas)
     Nars <- unlist(Nars)
+###number of harmonics of the signal in BFP/MLP; 2 or more fits eccentric orbits
+    if(!exists('Nh')) Nh <- 1
+    Nh <- max(1,as.integer(Nh))
     par.list <- sim.list <- phase.list <- per.list <- tits <- mc.list <- list()
     tits <- c()
     fs <- c()
@@ -280,18 +283,18 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
                     cat('Nma=',Nma,';Nar=',Nar,';model.type=man;Indices=',Indices, ';ofac=',ofac,';fmin=',frange[1],';fmax=',frange[2],';quantify=',quantify, ';renew=',renew,';noise.only=',noise.only,'\n')
                 }
                 if(multi.set){
-                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE,noise.only=noise.only)
+                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE,noise.only=noise.only,Nh=Nh)
                 }else{
-                    rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only)
+                    rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only,Nh=Nh)
                 }
 ###renew: every chi-square minimization start from the initial parameter values
                 ylab <- 'ln(BF)'
                 name <- 'logBF'
             }else if(per.type=='MLP'){
                 if(multi.set){
-                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2])
+                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],Nh=Nh)
                 }else{
-                    rv.ls <- MLP(t=tab[,1]-min(tab[,1]),y=y,dy=dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,fmin=frange[1],fmax=frange[2],MLP.type=MLP.type)
+                    rv.ls <- MLP(t=tab[,1]-min(tab[,1]),y=y,dy=dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,fmin=frange[1],fmax=frange[2],MLP.type=MLP.type,Nh=Nh)
                 }
                 ylab <- expression('log(ML/'*ML[max]*')')
                 name <- 'logML'
@@ -485,9 +488,15 @@ par.a2m <- function(par,popt,data,SigType='kepler',time.unit=1){
                 startvalue[1] <- log(startvalue[1])
             }
         }else{
-            phi <- as.numeric(xy2phi(par['A'],par['B']))
-            kopt <- as.numeric(sqrt(par['A']^2+par['B']^2))
-            startvalue <- c(log(popt),kopt,0,0,phi)
+            seed <- fourier_kepler_seed(par,popt)
+            if(!is.null(seed) && is.finite(seed$K1) && seed$K1>0){
+###analytical eccentric start from the fundamental and first harmonic
+                startvalue <- c(log(popt),seed$K1,seed$e1,seed$omega1,seed$Mo1)
+            }else{
+                phi <- as.numeric(xy2phi(par['A'],par['B']))
+                kopt <- as.numeric(sqrt(par['A']^2+par['B']^2))
+                startvalue <- c(log(popt),kopt,0,0,phi)
+            }
         }
         names(startvalue) <- c('per1','K1','e1','omega1','Mo1')
     }else if(SigType!='stochastic'){
@@ -836,7 +845,7 @@ sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE){
         par.opt <- unlist(per$par.opt)
         ysig0 <- as.numeric(per$ysig)
         res <- as.numeric(per$res)
-        ysim.sig <- as.numeric(par.opt['A']*cos(2*pi/popt*tsim)+par.opt['B']*sin(2*pi/popt*tsim))
+        ysim.sig <- harmonic_signal(par.opt,2*pi/popt,tsim)
         ParSig <- c(P=popt,par.opt)
     }
     ysig <- ysig0+res
@@ -888,11 +897,11 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
 #    }else{
         if(SigType=='circular'){
             if(!mcf){
-                ysim.sig <- par.opt['A']*cos(2*pi/popt*tsim)+par.opt['B']*sin(2*pi/popt*tsim)
+                ysim.sig <- harmonic_signal(par.opt,2*pi/popt,tsim)
                 ysim.all <- ysim.sig
                 if(any(names(par.opt)=='gamma')) ysim.all <- ysim.all+par.opt['gamma']
                 if(any(names(par.opt)=='beta')) ysim.all <- ysim.all+par.opt['beta']*tsim
-                ysig0 <- par.opt['A']*cos(2*pi/popt*t)+par.opt['B']*sin(2*pi/popt*t)
+                ysig0 <- harmonic_signal(par.opt,2*pi/popt,t)
                 ysig <- per$res+ysig0
                 res <- per$res
                 if(any(names(per)=='df') & FALSE){

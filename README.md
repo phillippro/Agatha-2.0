@@ -231,7 +231,37 @@ These files provide you plots and relevant data which store the x, y and probabl
 
 >results/HD210193_BFP_MA_periodogram_xxx - periodograms for columns 4,5,... in the data file. These columns store activity indices in the case of RV set. 
 
-## 4. MCMC sampling
+## 4. Eccentric orbits in BFP and MLP: harmonic (Fourier) fitting
+
+BFP and MLP originally fitted a single sinusoid at each trial period. An eccentric Keplerian
+moves power out of the fundamental into its harmonics, so a sinusoidal periodogram loses
+sensitivity as the eccentricity grows (the power in the fundamental drops to zero as
+`e -> 1`; Delisle & Segransan 2022, Fig. 2). Following Delisle, Segransan, Buchschacher &
+Alesina (2016, A&A 590, A134), the periodograms can now fit `Nh` harmonics
+`cos(k n t), sin(k n t)`, `k = 1..Nh`, at each trial period:
+
+- `Number of harmonics of the signal` in the 1D UI (default 2); `Nh` argument of `BFP()`,
+  `MLP()`, `BFP.multiset()` and `MLP.multiset()` (default 1, the previous behaviour).
+- The harmonic amplitudes enter the same weighted least-squares solve as the offset, trend,
+  proxies and AR/MA terms, so the red-noise treatment is unchanged. The BIC penalty of BFP
+  counts `2*Nh` amplitudes.
+- With `Nh >= 2`, the fitted fundamental and first harmonic (`V1`, `V2`) give `K`, `e`,
+  `omega` and `M0` analytically (Paper I, eqs. 20-34, with the Newton-Raphson refinement of
+  eqs. 38-40). That solution seeds the Keplerian fit (`KeplerFit`, `KeplerFit.multiset`) and
+  the MCMC start, replacing the previous blind random starts. When the first harmonic is
+  stronger than any Keplerian allows (Paper I, Sect. 4), the seed is flagged and the numerical
+  fit multi-starts over eccentricity instead.
+- A multi-harmonic fit is ambiguous between `P` and `2P` (a sinusoid at `P` fits the `2P`
+  model through its first harmonic). At the peak, if the first harmonic dominates the
+  fundamental the period is halved and refitted.
+
+On a simulated `e = 0.8` orbit the two-harmonic BFP gains about 40 per cent in
+`Delta chi^2` at the true period compared with the sinusoidal one, and nothing at `e = 0`.
+The analytical estimate is exact on exact Fourier coefficients; on real data its accuracy is
+limited by how well `V1`, `V2` can be measured from sparse sampling, which is why it is used
+as a seed rather than as the final answer.
+
+## 5. MCMC sampling
 
 When `MCMC sample size` is set to a non-zero value, the signal found by the periodogram is
 constrained with a parallel-tempering (replica-exchange) MCMC. A ladder of chains samples
@@ -253,7 +283,7 @@ The behaviour is controlled by the arguments of `mcfit()` and `sigfit()`:
 - `swap.interval` - iterations between replica-exchange sweeps (default 10).
 - `mcmc.verbose` - print per-replica acceptance rates, swap rates and step scales.
 
-## 5. Roadmap
+## 6. Roadmap
 
 >Develop a R markdown code to visualize the results
 
