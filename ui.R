@@ -126,6 +126,8 @@ shinyUI(fluidPage(
                          htmlOutput('text2D'),
 #                         tags$br(),
                          uiOutput('nar2'),
+                         uiOutput('noise.model2'),
+                         uiOutput('gp.par2'),
                          uiOutput('nma2'),
                          uiOutput('Inds2'),
                          sliderInput("ofac2", "Oversampling factor", min = 0.2, max = 20, value=1,step=0.2),

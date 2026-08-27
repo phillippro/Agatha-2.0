@@ -2700,7 +2700,9 @@ mp.min.points <- function(per.type,Indices,...){
     Nma <- if(is.null(dots$Nma)) 0 else as.integer(dots$Nma)
     Nar <- if(is.null(dots$Nar)) 0 else as.integer(dots$Nar)
     NI <- if(is.null(Indices) || all(is.na(Indices))) 0 else ncol(as.matrix(Indices))
-    base <- if(per.type %in% c('BFP','MLP')) 4+NI+2*(Nma+Nar) else 3
+    GP <- isTRUE(dots$GP)
+    Ngp <- if(GP) sum(is.na(if(is.null(dots$gp.par)) rep(NA,3) else dots$gp.par)) else 0
+    base <- if(per.type %in% c('BFP','MLP')) 4+NI+2*(Nma+Nar)+Ngp else 3
     max(5,base+2)
 }
 

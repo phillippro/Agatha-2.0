@@ -1353,6 +1353,18 @@ per2D.data <- function(vars,per.par,data){
     i <- 1
     Nma <- as.integer(pars[[i]]$Nma)
     Nar <- as.integer(pars[[i]]$Nar)
+###red-noise model of the windows: ARMA (default) or a shared SHO Gaussian process
+    if(!exists('noise.model')) noise.model <- 'ARMA'
+    GP <- noise.model=='GP'
+    gp.par <- rep(NA,3)
+    if(exists('gp.Prot') && length(gp.Prot)==1 && is.finite(gp.Prot) && gp.Prot>0) gp.par[2] <- log(gp.Prot)
+    if(exists('gp.tau') && length(gp.tau)==1 && is.finite(gp.tau) && gp.tau>0) gp.par[3] <- log(gp.tau)
+    if(GP){
+        Nma <- 0
+        Nar <- 0
+        Nmas <- rep(0,length(Nmas))
+        Nars <- rep(0,length(Nars))
+    }
     Inds.sets <- Inds
     if(length(per.target)==1){
         Inds <- as.integer(pars[[i]]$Inds)
@@ -1369,7 +1381,7 @@ per2D.data <- function(vars,per.par,data){
         instrument <- 'combined'
         subdata <- lapply(1:length(per.target),function(j) data[[per.target[j]]])
         if(!is.list(Inds.sets)) Inds.sets <- rep(list(Inds.sets),length(per.target))
-        tmp <- combine.data(data=subdata,Ninds=Inds.sets,Nmas=Nmas)
+        tmp <- combine.data(data=subdata,Ninds=Inds.sets,Nmas=Nmas,GP=GP,gp.par=gp.par)
         tab <- tmp$cdata
         idata <- tmp$idata
         colnames(tab) <- colnames(data[[per.target[1]]])[1:3]
@@ -1398,15 +1410,16 @@ per2D.data <- function(vars,per.par,data){
     y <- tab[,ypar]
     dy <- tab[,3]
     if(length(per.target)==1){
-        mp <- MP(t=t,y=y,dy=dy,Dt=Dt,nbin=Nbin,ofac=ofac,fmin=frange[1],fmax=frange[2],per.type=per.type,sj=0,Nma=Nma,Nar=Nar,Indices=Indices)
+        mp <- MP(t=t,y=y,dy=dy,Dt=Dt,nbin=Nbin,ofac=ofac,fmin=frange[1],fmax=frange[2],per.type=per.type,sj=0,Nma=Nma,Nar=Nar,Indices=Indices,GP=GP,gp.par=gp.par)
     }else{
-        mp <- MP(t=t,y=y,dy=dy,Dt=Dt,nbin=Nbin,ofac=ofac,fmin=frange[1],fmax=frange[2],per.type=per.type,sj=0,Nma=0,Nar=Nar,Indices=Indices)
+###the per-set noise (ARMA or GP) was removed in combine.data(); the combined residual is analysed white
+        mp <- MP(t=t,y=y,dy=dy,Dt=Dt,nbin=Nbin,ofac=ofac,fmin=frange[1],fmax=frange[2],per.type=per.type,sj=0,Nma=0,Nar=0,Indices=Indices)
     }
     x2 <- mp$tmid
     y2 <- mp$P
     z2 <- mp$powers
     z2.rel <- mp$rel.powers
-    fname <- paste0(paste(per.target,collapse='_'),'_MP_',paste(per.type,collapse=''),'_MA',paste(Nmas,collapse=''),'proxy',paste(Inds,collapse='.'))
+    fname <- paste0(paste(per.target,collapse='_'),'_MP_',paste(per.type,collapse=''),if(GP) '_GP' else paste0('_MA',paste(Nmas,collapse='')),'proxy',paste(Inds,collapse='.'))
     if(length(per.target)==1){
         return(list(t=t,y=y,dy=dy,xx=x2,yy=y2,zz=z2,zz.rel=z2.rel,fname=fname,ypar=ypar))
     }else{

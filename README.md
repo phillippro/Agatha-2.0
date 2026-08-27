@@ -296,6 +296,12 @@ How the GP enters each computation:
   scanned and `sigma`, `tauGP` are refitted at each trial period against the white-noise
   baseline, so the periodogram shows the evidence for quasi-periodic red noise.
 - Phase plots and residuals have the GP conditional mean removed.
+- The moving (2D) periodogram tab offers the same choice. With `GP`, the hyperparameters are
+  fitted inside each moving window (BFP: together with the signal at each trial period; MLP:
+  on the window's signal-free model, then subtracted); fixing the oscillation period makes
+  the windows comparable and much faster. With several data sets the per-set GP (or ARMA
+  model) is removed before the sets are combined. BFP with a GP is slow: every window is a
+  full scan.
 - When `GP` is selected the panel offers `GP oscillation period` (the quasi-periodicity of
   the correlated noise; for RV data the stellar rotation period) and `GP damping time scale`
   (how long the correlations stay coherent; for RV data the active-region lifetime), both in

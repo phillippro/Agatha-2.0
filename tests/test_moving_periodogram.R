@@ -22,13 +22,13 @@ data <- list(HIP88962_PFS=read.agatha.table('data/HIP88962_PFS.vels'),
              HD361_HARPSpre=read.agatha.table('data/HD361/HD361_HARPSpre.dat'),
              HD189567=read.agatha.table('data/HD189567_DACE_HARPS03.dat'))
 
-mp.case <- function(targets,per.type,Dtfrac,Nbin,Nma=0,Inds=0){
+mp.case <- function(targets,per.type,Dtfrac,Nbin,Nma=0,Inds=0,noise.model='ARMA',gp.Prot=NA,gp.tau=NA){
     d <- data[targets]
     tsp <- diff(range(unlist(lapply(d,function(x) x[,1]))))
     pars <- list(ns=c('RV','Window Function'),ofac=1,frange=c(1/tsp,1/2),per.type=per.type,per.target=targets,
                  files=NULL,Niter=0,Nmas=rep(Nma,length(targets)),Nars=rep(0,length(targets)),
                  Inds=rep(list(Inds),length(targets)),Dt=signif(tsp*Dtfrac,3),Nbin=Nbin,
-                 alpha=5,scale=TRUE,pmin.zoom=2,pmax.zoom=tsp,show.signal=TRUE)
+                 alpha=5,scale=TRUE,pmin.zoom=2,pmax.zoom=tsp,show.signal=TRUE,noise.model=noise.model,gp.Prot=gp.Prot,gp.tau=gp.tau)
     v <- per2D.data(vars='RV',per.par=pars,data=d)
     f <- tempfile(fileext='.pdf')
     pdf(f,8,8); plotMP(v,pars); dev.off()
@@ -74,5 +74,17 @@ data$sim <- d1
 v <- mp.case('sim','GLS',0.5,4)
 pk <- apply(v$zz,2,function(z) v$yy[which.max(z)])
 expect_true(all(abs(pk-P)<1),paste('window peaks',paste(round(pk,2),collapse=','),'do not track the injected period',P))
+
+####GP red noise inside the windows: free hyperparameters, a fixed oscillation
+####period, and two data sets whose GP is removed per set before combining
+v <- mp.case('HD361_PFS','MLP',0.6,4,noise.model='GP')
+expect_true(ncol(v$zz)==4 && any(is.finite(v$zz)) && grepl('_GP',v$fname),'MLP with a GP in the windows failed')
+v <- mp.case('HD361_PFS','MLP',0.6,4,noise.model='GP',gp.Prot=30)
+expect_true(ncol(v$zz)==4 && any(is.finite(v$zz)),'MLP with a GP and a fixed oscillation period failed')
+v <- mp.case(c('HD361_PFS','HD361_HARPSpre'),'MLP',0.5,4,noise.model='GP')
+expect_true(ncol(v$zz)==4 && length(v$idata)==2,'two-set moving periodogram with GP failed')
+####proxies are ignored with a GP only if none were selected; with one selected they still enter
+v <- mp.case('HD361_PFS','MLP',0.6,4,noise.model='GP',Inds=1)
+expect_true(ncol(v$zz)==4,'MLP with GP and a proxy failed')
 
 cat('moving periodogram tests passed\n')

@@ -154,8 +154,26 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
         }
   })
 
+    output$noise.model2 <- renderUI({
+        if(is.null(input$per.type2)) return()
+        if(any(input$per.type2=='MLP'|input$per.type2=='BFP')){
+            radioButtons('noise.model2','Red noise model',
+                         c('ARMA (per data set)'='ARMA','Gaussian process (quasi-periodic SHO kernel, shared by all data sets)'='GP'),selected='ARMA')
+        }
+    })
+
+    output$gp.par2 <- renderUI({
+        if(is.null(input$noise.model2) || input$noise.model2!='GP') return()
+        tagList(
+            numericInput('gp.Prot2','GP oscillation period [time unit of the data] (leave empty to fit it in every window)',value=NA,min=0),
+            numericInput('gp.tau2','GP damping time scale [time unit of the data] (leave empty to fit it)',value=NA,min=0),
+            helpText('The GP hyperparameters are fitted inside each moving window; fixing the oscillation period (e.g. from photometry) makes the windows comparable and much faster. BFP with a GP is slow: each window is a full scan.')
+        )
+    })
+
     output$nar2 <- renderUI({
     if(is.null(input$per.target2) | is.null(input$per.type2)) return()
+    if(!is.null(input$noise.model2) && input$noise.model2=='GP') return()
     if(any(input$per.type2=='MLP'|input$per.type2=='BFP')){
         lapply(1:Ntarget2(), function(i){
             selectizeInput(paste0("Nar2.",i),paste('Number of AR components for',input$per.target2[i]),choices = 0:10,selected = 0,multiple=FALSE)}
@@ -165,6 +183,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
 
     output$nma2 <- renderUI({
     if(is.null(input$per.target2) | is.null(input$per.type2)) return()
+    if(!is.null(input$noise.model2) && input$noise.model2=='GP') return()
     if(any(input$per.type2=='MLP'|input$per.type2=='BFP')){
         lapply(1:Ntarget2(), function(i){
             selectizeInput(paste0("Nma2.",i),paste('Number of MA components for',input$per.target2[i]),choices = 0:10,selected = 0,multiple=FALSE)}
@@ -677,6 +696,9 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
           vals <- c(vals,Nmas=0,Nars=0,Inds=0)
       }
       vals <- c(vals,Dt=signif(tspan()*as.numeric(input$Dt),3),Nbin=as.integer(input$Nbin),alpha=as.integer(input$alpha),scale=input$scale,pmin.zoom=input$range.zoom[1],pmax.zoom=input$range.zoom[2],show.signal=input$show.signal)
+      vals$noise.model <- if(is.null(input$noise.model2)) 'ARMA' else input$noise.model2
+      vals$gp.Prot <- if(is.null(input$gp.Prot2)) NA else suppressWarnings(as.numeric(input$gp.Prot2))
+      vals$gp.tau <- if(is.null(input$gp.tau2)) NA else suppressWarnings(as.numeric(input$gp.tau2))
       return(vals)
   })
 

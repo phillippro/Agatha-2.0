@@ -71,6 +71,7 @@ periodogram types:
    obsolete argument order - fixed; proxies are scaled per set as in the 1D path.
 1. `MP_plot.R` tolerates NA columns and a single detected peak; the 2D oversampling slider can
    no longer be 0.
+1. The 2D tab has the ARMA/GP noise-model choice with fixed or free GP time scales.
 1. Added `tests/test_moving_periodogram.R`.
 
 Remaining follow-up work:
