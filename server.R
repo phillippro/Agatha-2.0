@@ -1028,7 +1028,7 @@ output$color <- renderUI({
         },
       content = function(file) {
         pdf(file,8,8)
-        per1D.plot(data1D()$per.list,data1D()$tits,data1D()$pers,data1D()$levels,ylabs=data1D()$ylabs,download=TRUE,SigType=input$signal.type)
+        per1D.plot(data1D()$per.list,data1D()$tits,data1D()$pers,data1D()$levels,ylabs=data1D()$ylabs,download=TRUE,SigType=input$signal.type,par.list=data1D()$par.list)
         phase1D.plot(data1D()$phase.list,data1D()$sim.list,data1D()$tits,download=TRUE,repar=FALSE)
         dev.off()
       })
@@ -1044,31 +1044,40 @@ output$color <- renderUI({
       })
 
 
-    output$plot.single <- renderUI({
-        if(is.null(input$down.type) | is.null(data1D())) return()
-        if(input$down.type=='individual'){
-            selectizeInput('per1D.name','Select periodogram',
-                  choices=data1D()$tits,multiple=FALSE)
-        }
+###individual, publication-quality figures
+    single.plots <- reactive({
+        if(is.null(data1D())) return(NULL)
+        list.single.plots(data1D())
     })
 
-    output$per1D.single <- downloadHandler(
-        filename = function() {
-            ind <- which(input$per1D.name==data1D()$tits)
-            paste0(data1D()$fs[ind],'.png')
+    output$plot.single <- renderUI({
+        if(is.null(single.plots())) return()
+        tagList(
+            h5('Download an individual figure'),
+            selectizeInput('single.plot','Figure',choices=single.plots()$label,multiple=FALSE),
+            radioButtons('single.format','Format',choices=c('PDF (vector)'='pdf','PNG'='png','JPG'='jpg'),selected='pdf',inline=TRUE),
+            fluidRow(column(4,numericInput('single.width','Width [in]',value=6,min=2,max=20,step=0.5)),
+                     column(4,numericInput('single.height','Height [in]',value=4.5,min=2,max=20,step=0.5)),
+                     column(4,numericInput('single.dpi','DPI',value=300,min=72,max=1200,step=50))),
+            downloadButton('single.figure','Download this figure')
+        )
+    })
+
+    output$single.figure <- downloadHandler(
+        filename = function(){
+            sp <- single.plots(); k <- which(sp$label==input$single.plot)[1]
+            tag <- gsub('[^A-Za-z0-9]+','_',sp$label[k])
+            paste0(data1D()$fname,'_',tag,'.',input$single.format)
         },
-      content = function(file) {
-          #pdf(file,4,4)
-          png(file,width=4,height=4,units="in", res=150)
-        par(mar=c(5,5,1,1))
-        ind <- which(input$per1D.name==data1D()$tits)
-        per1D.plot(data1D()$per.data,data1D()$tits,data1D()$pers,data1D()$levels,data1D()$ylabs,download=TRUE,index=ind,SigType=input$signal.type)
-        dev.off()
-      })
+        content = function(file){
+            sp <- single.plots(); k <- which(sp$label==input$single.plot)[1]
+            save.single.plot(file,format=input$single.format,width=input$single.width,height=input$single.height,dpi=input$single.dpi,
+                             plot1D.single(data1D(),kind=sp$kind[k],ypar=sp$ypar[k],index=sp$index[k],SigType=input$signal.type))
+        })
 
     output$download.per1D.plot <- renderUI({
         if(is.null(data1D())) return()
-        downloadButton('per1D.figure', 'Download figures')
+        downloadButton('per1D.figure', 'Download all figures (PDF)')
 #        if(input$down.type=='all'){
 #            downloadButton('per1D.figure', 'Download periodograms')
 #        }else{
@@ -1089,7 +1098,7 @@ output$color <- renderUI({
 
     output$combined <- renderPlot({
         if(is.null(data1D())) return()
-        combined.plot(data1D()$per.list,data1D()$phase.list,data1D()$sim.list,data1D()$tits,data1D()$pers,data1D()$levels,data1D()$ylabs,SigType=input$signal.type)
+        combined.plot(data1D()$per.list,data1D()$phase.list,data1D()$sim.list,data1D()$tits,data1D()$pers,data1D()$levels,data1D()$ylabs,SigType=input$signal.type,par.list=data1D()$par.list)
     })
 
     output$plot.1Dcombined <- renderUI({

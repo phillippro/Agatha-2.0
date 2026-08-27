@@ -68,6 +68,7 @@ Touched implementation points:
 - `tests/test_ptmcmc.R`
 - `tests/test_fourier_kepler.R`
 - `tests/test_gp_periodogram.R`
+- `tests/test_plots.R`
 - `additional_signals.R`
 
 Tracking list:

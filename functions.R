@@ -1061,141 +1061,264 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
     return(list(per=per,t=ts,y=as.numeric(ysig),ey=data[,3],res=as.numeric(res),ysig0=as.numeric(ysig0),tsim0=tsim0,ysim0=ysim0,tsim=tsims,ysim=ysims,ParSig=ParSig,par.stat=par.stat,popt=popt,mc=mc))
 }
 
-phase1D.plot <- function(phase.list,sim.list,tits,download=FALSE,index=NULL,repar=TRUE){
+###########################################################################
+####Publication-quality single-panel plots for the 1D periodogram results.
+####Every figure of the app is drawn by one of the panel.* functions below, so
+####the on-screen figure, the bundled PDF and an individually downloaded panel
+####are the same drawing. Colours follow the Okabe-Ito palette.
+###########################################################################
+###tcol() lives in mcmc_func.R, which the app sources after this file; keep a
+###local fallback so the plotting layer works on its own
+if(!exists('tcol')){
+    tcol <- function(color, percent=50, name=NULL){
+        rgb.val <- col2rgb(color)
+        rgb(rgb.val[1],rgb.val[2],rgb.val[3],max=255,alpha=(100-percent)*255/100,names=name)
+    }
+}
+pub.col <- list(model='#D55E00',peak='#0072B2',data='black',err=tcol('black',50),level='grey40',res='grey20')
+
+pub.par <- function(mfrow=c(1,1),cex=1){
+    par(mfrow=mfrow,mar=c(4.5,5,2.6,1.2),mgp=c(2.9,0.7,0),las=1,tcl=-0.4,
+        cex=cex,cex.lab=1.25,cex.axis=1.05,cex.main=1.1,font.main=1,xaxs='r',yaxs='r')
+}
+
+pretty.title <- function(tit){
+###'BFP; combined;RV;1 signal' -> 'BFP, RV (combined), signal 1'
+    f <- trimws(unlist(strsplit(tit,';')))
+    if(length(f)<3) return(tit)
+    obs <- f[3]
+    if(grepl('Window',obs)) return(paste0('Window function (',f[2],')'))
+    sig <- if(length(f)>=4) gsub('(\\d+) signal','signal \\1',f[4]) else ''
+    paste0(f[1],', ',obs,' (',f[2],')',if(nzchar(sig)) paste0(', ',sig) else '')
+}
+
+ylab.obs <- function(ypar){
+    if(ypar=='RV') expression(RV~'[m s'^-1*']') else ypar
+}
+
+ylab.power <- function(cname){
+###from a per.list column name such as 'BFP1signal:RV:logBF'
+    if(grepl('logBF',cname)) 'ln BF' else if(grepl('logML',cname)) expression(ln(ML/ML[max])) else 'Power'
+}
+
+pub.axes <- function(xlog=FALSE){
+###minor ticks on a log axis via magicaxis when it is installed (the app loads
+###it); plain axes otherwise, so the plotting layer has no hard dependency
+    if(xlog && requireNamespace('magicaxis',quietly=TRUE)){
+        magicaxis::magaxis(side=1,tcl=-0.4,cex.axis=par('cex.axis'))
+    }else{
+        axis(1)
+    }
+    axis(2)
+    box()
+}
+
+panel.periodogram <- function(per.list,ypar,i,title,levels=NULL,SigType='circular',pub=TRUE,Pmark=NULL){
+###Pmark: the period reported by the fit; with harmonics the raw maximum can sit
+###at the 2P alias, so the reported period is what gets annotated
+###per.list[[ypar]]: column 1 = period, columns 2.. = powers; i selects the power column
+    P <- per.list[[ypar]][,1]
+    power <- per.list[[ypar]][,i+1]
+    cname <- colnames(per.list[[ypar]])[i+1]
+    ylab <- ylab.power(cname)
+    window <- grepl('Window',title)
+    ymin <- if(SigType!='stochastic') median(power) else max(0,min(power))
+    ylim <- c(ymin,max(power)+0.18*(max(power)-ymin))
+    xlab <- if(SigType=='stochastic') 'Time scale [day]' else 'Period [day]'
+    plot(P,power,type='n',log='x',xaxt='n',yaxt='n',xlab=xlab,ylab=ylab,ylim=ylim,
+         main=if(pub) pretty.title(title) else title)
+    pub.axes(xlog=TRUE)
+    if(!window && !is.null(levels)){
+        lv <- levels[is.finite(levels)]
+        if(length(lv)>0) abline(h=lv,lty=2,col=pub.col$level,lwd=1)
+    }
+    lines(P,power,lwd=if(pub) 1.6 else 1,col=pub.col$data)
+    k <- which.max(power)
+    if(!is.null(Pmark) && is.finite(Pmark) && Pmark>0){
+        k <- which.min(abs(log(P)-log(Pmark)))
+    }
+    pmax <- P[k]; wmax <- power[k]
+    dyv <- max(power)-ymin
+    par(xpd=TRUE)
+    kraw <- which.max(power)
+    if(abs(log(P[kraw]/pmax))>0.01){
+###the raw maximum is an alias of the reported period: mark it lightly
+        points(P[kraw],power[kraw],pch=1,col=pub.col$level)
+        text(P[kraw],power[kraw],labels=paste0(format(P[kraw],digits=3),' (alias)'),pos=3,col=pub.col$level,cex=0.8)
+    }
+    lab <- if(SigType=='stochastic') paste0('tau = ',format(pmax,digits=4),' d') else paste0('P = ',format(pmax,digits=4),' d')
+    text(pmax,wmax+0.08*dyv,pos=3,labels=lab,col=pub.col$peak,cex=1.0)
+    try(arrows(pmax,wmax+0.08*dyv,pmax,wmax+0.02*dyv,col=pub.col$peak,length=0.05,lwd=1.5),TRUE)
+    par(xpd=FALSE)
+    invisible(list(Popt=pmax,power=wmax))
+}
+
+panel.phase <- function(phase.list,sim.list,ypar,i,title,pub=TRUE){
+    ph <- phase.list[[ypar]]; sm <- sim.list[[ypar]]
+    t <- ph[,paste0('t_sig',i)]; y <- ph[,paste0('y_sig',i)]; ey <- ph[,'ey0']
+    tsim <- sm[,paste0('tsim_sig',i)]; ysim <- sm[,paste0('ysim_sig',i)]
+    ylim <- range(c(y-ey,y+ey,ysim),na.rm=TRUE)
+    plot(t,y,type='n',xaxt='n',yaxt='n',xlab='Phase [day]',ylab=ylab.obs(ypar),ylim=ylim,
+         main=if(pub) pretty.title(title) else title)
+    pub.axes()
+    arrows(t,y-ey,t,y+ey,length=0.02,angle=90,code=3,col=pub.col$err)
+    lines(tsim,ysim,col=pub.col$model,lwd=2.5)
+    points(t,y,pch=21,bg='white',col=pub.col$data,cex=0.9)
+}
+
+panel.fit <- function(phase.list,sim.list,ypar,title,pub=TRUE){
+    ph <- phase.list[[ypar]]; sm <- sim.list[[ypar]]
+    t <- ph[,'t0']; ey <- ph[,'ey0']; y <- ph[,'y_all']
+    tsim <- sm[,'tsim0']+min(t); ysim <- sm[,'ysim_all']
+    ylim <- range(c(y-ey,y+ey,ysim),na.rm=TRUE)
+    plot(t,y,type='n',xaxt='n',yaxt='n',xlab='Time [day]',ylab=ylab.obs(ypar),ylim=ylim,
+         main=if(pub) gsub(', signal \\d+',', combined fit',pretty.title(title)) else gsub('\\d signal','combined fit',title))
+    pub.axes()
+    lines(tsim,ysim,col=pub.col$model,lwd=2)
+    try(arrows(t,y-ey,t,y+ey,length=0.02,angle=90,code=3,col=pub.col$err),TRUE)
+    points(t,y,pch=21,bg='white',col=pub.col$data,cex=0.9)
+    legend('topleft',bg='white',box.col='white',legend=paste0('RMS = ',format(sd(y),digits=3)),text.col=pub.col$peak)
+}
+
+panel.residual <- function(phase.list,ypar,title,pub=TRUE){
+    ph <- phase.list[[ypar]]
+    t <- ph[,'t0']; ey <- ph[,'ey0']; res <- ph[,'res_all']
+    ylim <- range(c(res-ey,res+ey),na.rm=TRUE)
+    plot(t,res,type='n',xaxt='n',yaxt='n',xlab='Time [day]',ylab=paste('Residual',if(ypar=='RV') '[m/s]' else ''),ylim=ylim,
+         main=if(pub) gsub(', signal \\d+',', residual',pretty.title(title)) else gsub('\\d signal','residual',title))
+    pub.axes()
+    abline(h=0,lty=3,col=pub.col$level)
+    try(arrows(t,res-ey,t,res+ey,length=0.02,angle=90,code=3,col=pub.col$err),TRUE)
+    points(t,res,pch=21,bg='white',col=pub.col$res,cex=0.9)
+    legend('topleft',bg='white',box.col='white',legend=paste0('RMS = ',format(sd(res),digits=3)),text.col=pub.col$peak)
+}
+
+list.single.plots <- function(d){
+###every panel available from a calc.1Dper() result, as a table used by the
+###download selector: label, kind, observable, index
+    out <- c()
+    for(ypar in names(d$per.list)){
+        titles <- d$tits[grepl(paste0(';',ypar,';'),d$tits)]
+        np <- ncol(d$per.list[[ypar]])-1
+        for(i in 1:np){
+            out <- rbind(out,data.frame(label=paste0('Periodogram: ',pretty.title(titles[i])),kind='periodogram',ypar=ypar,index=i,stringsAsFactors=FALSE))
+        }
+        if(!is.null(d$phase.list[[ypar]])){
+            ns <- length(grep('^y_sig',colnames(d$phase.list[[ypar]])))
+            for(i in 1:ns){
+                out <- rbind(out,data.frame(label=paste0('Phase plot: ',pretty.title(titles[i])),kind='phase',ypar=ypar,index=i,stringsAsFactors=FALSE))
+            }
+            out <- rbind(out,data.frame(label=paste0('Combined fit: ',ypar),kind='fit',ypar=ypar,index=1,stringsAsFactors=FALSE))
+            out <- rbind(out,data.frame(label=paste0('Residual: ',ypar),kind='residual',ypar=ypar,index=1,stringsAsFactors=FALSE))
+        }
+    }
+    out
+}
+
+plot1D.single <- function(d,kind,ypar,index=1,SigType='circular',pub=TRUE){
+###draw exactly one panel of a calc.1Dper() result on the current device
+    pub.par()
+    titles <- d$tits[grepl(paste0(';',ypar,';'),d$tits)]
+    if(kind=='periodogram'){
+        gi <- level.index(d,ypar,index)
+        panel.periodogram(d$per.list,ypar,index,titles[index],levels=d$levels[,gi],SigType=SigType,pub=pub,
+                          Pmark=reported.period(d$par.list,ypar,index))
+    }else if(kind=='phase'){
+        panel.phase(d$phase.list,d$sim.list,ypar,index,titles[index],pub=pub)
+    }else if(kind=='fit'){
+        panel.fit(d$phase.list,d$sim.list,ypar,titles[1],pub=pub)
+    }else if(kind=='residual'){
+        panel.residual(d$phase.list,ypar,titles[1],pub=pub)
+    }
+}
+
+level.index <- function(d,ypar,i){
+###column of d$levels for the i-th periodogram of observable ypar: levels are
+###stored in the order the periodograms were computed, observable by observable
+    gi <- 0
+    for(yp in names(d$per.list)){
+        np <- ncol(d$per.list[[yp]])-1
+        if(yp==ypar) return(gi+i)
+        gi <- gi+np
+    }
+    gi+i
+}
+
+save.single.plot <- function(file,format='png',width=6,height=4.5,dpi=300,expr){
+###open the requested device, evaluate the drawing expression, close it
+    format <- tolower(format)
+    if(format=='pdf'){
+        pdf(file,width=width,height=height,useDingbats=FALSE)
+    }else if(format=='png'){
+        png(file,width=width,height=height,units='in',res=dpi)
+    }else if(format %in% c('jpg','jpeg')){
+        jpeg(file,width=width,height=height,units='in',res=dpi,quality=95)
+    }else{
+        stop('unknown figure format: ',format)
+    }
+    on.exit(dev.off())
+    force(expr)
+    invisible(file)
+}
+
+phase1D.plot <- function(phase.list,sim.list,tits,download=FALSE,index=NULL,repar=TRUE,pub=TRUE){
     if(repar){
         if(is.null(index)){
-            par(mfrow=c(ceiling(Nmax.plots/2),2),mar=c(5,5,3,1),cex.lab=1.5,cex.axis=1.5,cex=1,cex.main=1.0)
+            pub.par(mfrow=c(ceiling(Nmax.plots/2),2))
         }
         if(download & is.null(index)){
-            par(mfrow=c(2,2),mar=c(5,5,3,1),cex.lab=1.2,cex.main=0.8,cex.axis=1.2,cex=1)
+            pub.par(mfrow=c(2,2),cex=0.9)
         }
     }
-    ypars <- names(phase.list)
-    for(ypar in ypars){
+    for(ypar in names(phase.list)){
         if(!is.null(index)){
             inds <- index
-            titles <- rep('',inds)
         }else{
-            inds <- 1:length(grep('y_sig',colnames(phase.list[[ypar]])))
-            titles <- tits[grepl(paste0(';',ypar,';'),tits)]
+            inds <- 1:length(grep('^y_sig',colnames(phase.list[[ypar]])))
         }
-        ylab <- unlist(strsplit(titles[1],';'))[3]
-        ysig0 <- 0
-        ysim0 <- 0
+        titles <- tits[grepl(paste0(';',ypar,';'),tits)]
         for(i in inds){
-            t <- phase.list[[ypar]][,paste0('t_sig',i)]
-            y <- phase.list[[ypar]][,paste0('y_sig',i)]
-            ey <- phase.list[[ypar]][,'ey0']
-
-            tsim <- sim.list[[ypar]][,paste0('tsim_sig',i)]
-            ysim <- sim.list[[ypar]][,paste0('ysim_sig',i)]
-
-            ysig0 <- ysig0+phase.list[[ypar]][,paste0('ysig_sig',i)]
-            ysim0 <- ysim0+sim.list[[ypar]][,paste0('ysim0_sig',i)]
-
-            plot(t,y,xlab='Phase [day]',ylab=ylab,main=titles[i],col='white')
-                                        #    lines(df$tsim,df$ysim,col=tcol('red',50))
-            lines(tsim,ysim,col='red',lwd=3)
-            points(t,y,col='black')
-            arrows(t,y-ey,t,y+ey,length=0.03,angle=90,code=3,col=tcol('black',50))
+            panel.phase(phase.list,sim.list,ypar,i,titles[i],pub=pub)
         }
-###total fit
-        t <- phase.list[[ypar]][,'t0']
-        ey <- phase.list[[ypar]][,'ey0']
-        res <- phase.list[[ypar]][,'res_all']
-                                        #    y <- res+ysig0
-        y <- phase.list[[ypar]][,'y_all']
-        tsim0 <- sim.list[[ypar]][,'tsim0']
-        ysim.all <- sim.list[[ypar]][,'ysim_all']
-
-        plot(t,y,xlab='BJD [day]',ylab=ylab,main=gsub('\\d signal','combined fit',titles[i]),col='white')
-        lines(tsim0+min(t),ysim.all,col='red',lwd=3)
-        points(t,y,col='black')
-        try(arrows(t,y-ey,t,y+ey,length=0.03,angle=90,code=3,col=tcol('black',50)),TRUE)
-        legend('topleft',bty='n',legend=paste('RMS =',round(sd(y),1),'\n'),text.col='blue')
-
-###residual
-        plot(t,res,xlab='BJD [day]',ylab=ylab,main=gsub('\\d signal','residual',titles[i]))
-        try(arrows(t,res-ey,t,res+ey,length=0.03,angle=90,code=3,col=tcol('black',50)),TRUE)
-        legend('topleft',bty='n',legend=paste('RMS =',round(sd(res),1),'\n'),text.col='blue')
+        panel.fit(phase.list,sim.list,ypar,titles[max(inds)],pub=pub)
+        panel.residual(phase.list,ypar,titles[max(inds)],pub=pub)
     }
 }
 
-combined.plot <- function(per.list,phase.list,sim.list,tits,pers,levels,ylabs,SigType='circular',download=FALSE,index=NULL){
-    per1D.plot(per.list,tits,pers,levels,ylabs,download=download,index=index,SigType=SigType)
-    phase1D.plot(phase.list,sim.list,tits=tits,download=download,index=index,repar=FALSE)
+combined.plot <- function(per.list,phase.list,sim.list,tits,pers,levels,ylabs,SigType='circular',download=FALSE,index=NULL,pub=TRUE,par.list=NULL){
+    per1D.plot(per.list,tits,pers,levels,ylabs,download=download,index=index,SigType=SigType,pub=pub,par.list=par.list)
+    phase1D.plot(phase.list,sim.list,tits=tits,download=download,index=index,repar=FALSE,pub=pub)
 }
 
-per1D.plot <- function(per.list,tits,pers,levels,ylabs,download=FALSE,index=NULL,SigType='circular'){
+per1D.plot <- function(per.list,tits,pers,levels,ylabs,download=FALSE,index=NULL,SigType='circular',pub=TRUE,par.list=NULL){
     if(is.null(index)){
-        par(mfrow=c(ceiling(Nmax.plots/2),2),mar=c(5,5,3,1),cex.lab=1.5,cex.axis=1.5,cex=1,cex.main=1.0)
+        pub.par(mfrow=c(ceiling(Nmax.plots/2),2))
     }
     if(download & is.null(index)){
-        par(mfrow=c(2,2),mar=c(5,5,3,1),cex.lab=1.2,cex.main=0.8,cex.axis=1.2,cex=1)
+        pub.par(mfrow=c(2,2),cex=0.9)
     }
-    ypars <- names(per.list)
-    for(ypar in ypars){
-        P <- per.list[[ypar]][,1]
-        if(!is.null(index)){
-            inds <- index
-            titles <- rep('',inds)
-        }else{
-            inds <- 1:(ncol(per.list[[ypar]])-1)
-            titles <- tits[grepl(paste0(';',ypar,';'),tits)]
-        }
+    gi <- 0
+    for(ypar in names(per.list)){
+        np <- ncol(per.list[[ypar]])-1
+        titles <- tits[grepl(paste0(';',ypar,';'),tits)]
+        inds <- if(!is.null(index)) index else 1:np
         for(i in inds){
-            power <- per.list[[ypar]][,i+1]
-            ylab <- ylabs[i]#gsub('.+:','',colnames(per.list)[i+1])
-            per.type <- gsub('[[:digit:]]signal:.+','',colnames(per.list[[ypar]])[i+1])
-            f1 <- gsub('signal:.+','',colnames(per.list[[ypar]])[i+1])
-            Nsig <- gsub('[A-Z]','',f1)
-            if(SigType!='stochastic'){
-                ymin <- median(power)
-            }else{
-                ymin <- max(0,min(power))
-            }
-                                        #        ymin <- min(power)
-            if(grepl('Window',titles[i])){
-                ylim <- c(ymin,max(power)+0.15*(max(power)-ymin))
-            }else{
-                                        #            ylim <- c(ymin,max(max(power)+0.15*(max(power)-ymin),levels[which(!is.na(levels[,i])),i]))
-                ylim <- c(ymin,max(power)+0.15*(max(power)-ymin))
-            }
-            if(SigType=='stochastic'){
-                xlab <- 'Time scale [day]'
-            }else{
-                xlab <- 'Period [day]'
-            }
-            plot(P,power,xlab=xlab,ylab=ylab,xaxt='n',log='x',type='l',main=titles[i], ylim=ylim)
-            magaxis(side=1,tcl=-0.5)
-            if(!grepl('Window',titles[i])){
-                abline(h=levels[,i],lty=2)
-            }
-            p <- show.peaks(ps=P,powers=power,levels=levels[,i])
-            if(!is.matrix(p)){
-                pmaxs <- p[1]
-                power.max <- p[2]
-            }else{
-                pmaxs <- p[,1]
-                power.max <- p[,2]
-                if(length(pmaxs)>4){
-                    pmaxs <- p[1:2,1]
-                    power.max <- p[1:2,2]
-                }
-            }
-            if(length(pmaxs)>0){
-                par(xpd=TRUE)
-                offset <- c(0.08*(max(power)-ymin), 0.02*(max(power)-ymin))
-                                        #            pmaxs <- pmaxs[1]
-                                        #            power.max <- power.max[1]
-                pmaxs <- P[which.max(power)]
-                power.max <- power[which.max(power)]
-                text(pmaxs,power.max+offset[1],pos=3,labels=format(pmaxs,digit=4),col='red',cex=1.0)
-                try(arrows(pmaxs,power.max+offset[1],pmaxs,power.max+offset[2],col='red',length=0.05),TRUE)
-                par(xpd=FALSE)
-            }
+###significance levels are stored per periodogram across all observables
+            lv <- if(is.matrix(levels) && ncol(levels)>=gi+i) levels[,gi+i] else NULL
+            Pmark <- reported.period(par.list,ypar,i)
+            panel.periodogram(per.list,ypar,i,titles[i],levels=lv,SigType=SigType,pub=pub,Pmark=Pmark)
         }
+        gi <- gi+np
     }
+}
+
+reported.period <- function(par.list,ypar,i){
+###period of the i-th signal in the fitted parameters, if available
+    if(is.null(par.list) || is.null(par.list[[ypar]])) return(NULL)
+    pl <- par.list[[ypar]]
+    nm <- paste0('P',i)
+    v <- if(is.matrix(pl)) { if(nm%in%colnames(pl)) pl['mode',nm] else NULL } else if(nm%in%names(pl)) pl[[nm]] else NULL
+    if(is.null(v) || !is.finite(v)) NULL else as.numeric(v)
 }
 
 per2D.data <- function(vars,per.par,data){

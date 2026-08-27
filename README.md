@@ -319,7 +319,23 @@ immediate for a few hundred points; for several thousand points prefer `ARMA` or
 MCMC sampling is not yet available with the GP noise model; the maximum-likelihood fit is
 returned with a warning.
 
-## 6. MCMC sampling
+## 6. Figures
+
+All 1D figures - periodograms, phase-folded signals, the combined fit and the residuals - are
+drawn by single-panel functions (`panel.periodogram`, `panel.phase`, `panel.fit`,
+`panel.residual` in `functions.R`) with a publication style: labelled axes with units, minor
+tick marks, colour-blind-safe colours (Okabe-Ito), readable titles, the peak annotated with its
+period, significance thresholds as dashed lines, and RMS values on the fit and residual
+panels. The on-screen figure and every download use the same drawing.
+
+Under `Download an individual figure` in the 1D panel, choose any panel of the current result,
+the format (`PDF` vector, `PNG` or `JPG`), the size in inches and the resolution in dpi, and
+download it on its own. `Download all figures (PDF)` still gives the bundled multi-page file.
+From R, `list.single.plots(out)` lists the panels of a `calc.1Dper()` result and
+`save.single.plot(file, format, width, height, dpi, plot1D.single(out, kind, ypar, index))`
+writes one of them.
+
+## 7. MCMC sampling
 
 When `MCMC sample size` is set to a non-zero value, the signal found by the periodogram is
 constrained with a parallel-tempering (replica-exchange) MCMC. A ladder of chains samples
@@ -357,7 +373,7 @@ The behaviour is controlled by the arguments of `mcfit()` and `sigfit()`:
 `run.ptmcmc()` also accepts `adapt.ladder`, `adapt.window`, `adapt.nu`, `adapt.t0`,
 `max.extend` and `Rhat.max` for finer control.
 
-## 7. Roadmap
+## 8. Roadmap
 
 >Develop a R markdown code to visualize the results
 

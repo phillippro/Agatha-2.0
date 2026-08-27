@@ -52,6 +52,12 @@ Completed in the GP implementation:
 1. GP time scales can be fixed from the panel (`gp.Prot`, `gp.tau`) or left free.
 1. Added `tests/test_gp_periodogram.R`.
 
+Completed for figures:
+
+1. Publication-style single-panel plotting layer (`panel.*`, `plot1D.single`, `save.single.plot`)
+   used by the screen, the bundled PDF and per-figure downloads in PDF/PNG/JPG with size and dpi.
+1. Added `tests/test_plots.R`.
+
 Remaining follow-up work:
 
 1. MCMC with the GP noise model (the `mcfit` data wrapper is ARMA-only).
