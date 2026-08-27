@@ -38,7 +38,19 @@ Implemented after that (Fourier/harmonic periodograms):
 - Known limit: for `e >~ 0.9` the harmonic series converges slowly and `V1`, `V2` from sparse
   data are biased; the seed is then flagged (`ok=FALSE`) and the numerical fit multi-starts.
 
+Implemented after that (GP red noise):
+
+- `noise.model` ('ARMA'|'GP') through the UI, `calc.1Dper`, BFP/MLP and the multi-set path.
+- Dense SHO-kernel GLS core in `periodoframe.R`; the old celerite R port is wrong (kept but
+  unused). Known cost: O(N^3) per evaluation.
+- Multi-harmonic P/2P check now likelihood-based (`harmonic_period_check(P, logL1)`).
+- HIP 88962 PFS (47 points): with white noise the BFP finds ~1950-2000 d, the harmonic seed and
+  LM fit give e~0.6, K~60 m/s; with MA(1) the noise model absorbs part of the signal and the
+  result is unstable between runs (multimodal `sopt` restarts) - worth a larger `Nsamp`.
+
 Remaining engineering targets:
+
+- MCMC with the GP noise model.
 
 - Extend multi-set support to proxy terms.
 - Extend MCMC refinement to multi-set fits.
@@ -55,6 +67,7 @@ Touched implementation points:
 - `tests/test_multiset_periodogram.R`
 - `tests/test_ptmcmc.R`
 - `tests/test_fourier_kepler.R`
+- `tests/test_gp_periodogram.R`
 - `additional_signals.R`
 
 Tracking list:

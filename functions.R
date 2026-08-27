@@ -150,6 +150,18 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
 ###number of harmonics of the signal in BFP/MLP; 2 or more fits eccentric orbits
     if(!exists('Nh')) Nh <- 1
     Nh <- max(1,as.integer(Nh))
+###red-noise model: 'ARMA' (per-set AR/MA orders) or 'GP' (shared SHO Gaussian process)
+    if(!exists('noise.model')) noise.model <- 'ARMA'
+    GP <- noise.model=='GP'
+    gp.par <- rep(NA,3)
+    if(GP){
+        Nmas <- rep(0,length(Nmas))
+        Nars <- rep(0,length(Nars))
+        if(mcf){
+            warning('MCMC with a GP noise model is not implemented; using the maximum-likelihood fit.')
+            mcf <- FALSE
+        }
+    }
     par.list <- sim.list <- phase.list <- per.list <- tits <- mc.list <- list()
     tits <- c()
     fs <- c()
@@ -283,18 +295,18 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
                     cat('Nma=',Nma,';Nar=',Nar,';model.type=man;Indices=',Indices, ';ofac=',ofac,';fmin=',frange[1],';fmax=',frange[2],';quantify=',quantify, ';renew=',renew,';noise.only=',noise.only,'\n')
                 }
                 if(multi.set){
-                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE,noise.only=noise.only,Nh=Nh)
+                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE,noise.only=noise.only,Nh=Nh,noise.model=noise.model)
                 }else{
-                    rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only,Nh=Nh)
+                    rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only,Nh=Nh,GP=GP,gp.par=gp.par)
                 }
 ###renew: every chi-square minimization start from the initial parameter values
                 ylab <- 'ln(BF)'
                 name <- 'logBF'
             }else if(per.type=='MLP'){
                 if(multi.set){
-                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],Nh=Nh)
+                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],Nh=Nh,noise.model=noise.model)
                 }else{
-                    rv.ls <- MLP(t=tab[,1]-min(tab[,1]),y=y,dy=dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,fmin=frange[1],fmax=frange[2],MLP.type=MLP.type,Nh=Nh)
+                    rv.ls <- MLP(t=tab[,1]-min(tab[,1]),y=y,dy=dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,fmin=frange[1],fmax=frange[2],MLP.type=MLP.type,Nh=Nh,GP=GP,gp.par=gp.par)
                 }
                 ylab <- expression('log(ML/'*ML[max]*')')
                 name <- 'logML'
@@ -907,6 +919,9 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
                 if(any(names(par.opt)=='gamma')) ysim.all <- ysim.all+par.opt['gamma']
                 if(any(names(par.opt)=='beta')) ysim.all <- ysim.all+par.opt['beta']*tsim
                 ysig0 <- harmonic_signal(par.opt,2*pi/popt,t)
+                if(isTRUE(per$df$GP)){
+                    per$res <- per$res-gp_predict_par(t,data[,3],par.opt,per$df,per$res)
+                }
                 ysig <- per$res+ysig0
                 res <- per$res
                 if(any(names(per)=='df') & FALSE){
@@ -953,6 +968,7 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
                 fit <- KeplerFit(per,basis=basis)
                 per$par.opt <- fit$ParKep
                 per$Popt <- fit$ParKep$P1
+                if(isTRUE(df$GP)) df$predict.gp <- TRUE
                 sig <- KeplerSig(fit$ParKep,df,basis=basis)
                 sim <- KeplerSim(fit$ParKep,df,tsim,basis=basis)#with trend
                 res <- sig$res
@@ -972,15 +988,25 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
         }else if(SigType=='stochastic'){
 ###Stochastic fitting; type=='noise'
             if(!mcf){
-                per$Popt <- exp(per$par.opt[grep('logtau',names(per$par.opt))])
+                if(any(names(per$par.opt)=='logProt')){
+                    per$Popt <- exp(per$par.opt[['logProt']])
+                }else{
+                    per$Popt <- exp(per$par.opt[grep('logtau',names(per$par.opt))])
+                }
                 popt <- per$Popt[1]
                 df <- per$df
                 fit <- CircularSig(par.list,df)
                 ysig0 <- fit$yred
+                if(isTRUE(df$GP)){
+                    ygp <- gp_predict_par(t,data[,3],par.list,df,fit$res)
+                    ysig0 <- ysig0+ygp
+                    fit$res <- fit$res-ygp
+                }
                 ysig <- fit$res+ysig0
                 res <- per$res <- fit$res
                 sim <- CircularSim(par.list,df,popt,tsim)
                 ysim.sig <- sim$yred
+                if(isTRUE(df$GP)) ysim.sig <- ysim.sig+approxfun(t,ygp,rule=2)(tsim)
                 ysim.all <- sim$y
                 per$ysims <- per$ysims+ysim.sig
             }

@@ -123,14 +123,30 @@ KeplerSig <- function(par,df,basis='natural'){
     yred <- yma+yar
     ypred <- ypred+yma+yar
     res <- y-ypred
+    ygp <- 0
+    if(isTRUE(df$GP) && isTRUE(df$predict.gp)){
+###conditional mean of the GP given the residual, for the plots and residuals
+        ygp <- gp_predict_par(t,dy,par,df,res)
+        yred <- yred+ygp
+        ypred <- ypred+ygp
+        res <- y-ypred
+    }
 
-    return(list(res=res,y=ypred,ysig=ysig,ytrend=ytrend,yproxy=yproxy,yred=yred,yma=yma,yar=yar))
+    return(list(res=res,y=ypred,ysig=ysig,ytrend=ytrend,yproxy=yproxy,yred=yred,yma=yma,yar=yar,ygp=ygp))
 }
 
 KeplerRes <- function(par,df){
     y <- df$data[,2]
     dy <- df$data[,3]
     v <- KeplerSig(par,df,df$basis)$y
+    if(isTRUE(df$GP)){
+###SHO Gaussian-process likelihood through the celerite solver, as in CircularRes
+        t <- df$data[,1]
+        logProt <- c(df$logProt,par$logProt)[1]
+        logtauGP <- c(df$logtauGP,par$logtauGP)[1]
+        sigmaGP <- c(df$sigmaGP,par$sigmaGP)[1]
+        return(gp_res(t,y-v,dy,par[['sj']],sigmaGP,logProt,logtauGP))
+    }
     neglnLs <- (y-v)^2/(2*(dy^2+par[['sj']]^2)) + 0.5*log(dy^2+par[['sj']]^2)+log(sqrt(2*pi))+off
     if(any(neglnLs<0)) neglnLs[neglnLs<0] <- 0
     sqrneglnLs <- sqrt(neglnLs)
@@ -434,6 +450,12 @@ KeplerSim <- function(par,df,tsim,basis='natural'){
         yar.fun <- approxfun(t,tmp$yar)
         yar <- yar.fun(tsim)
     }
+###GP component
+    ygp <- 0
+    if(!is.null(tmp$ygp) && any(tmp$ygp!=0)){
+        ygp.fun <- approxfun(t,tmp$ygp,rule=2)
+        ygp <- ygp.fun(tsim)
+    }
 
 ###proxy component
     if(df$NI>0){
@@ -450,7 +472,7 @@ KeplerSim <- function(par,df,tsim,basis='natural'){
     }
 
 ###sum
-    yred <- yma + yar
+    yred <- yma + yar + ygp
     y <- ysig+ytrend+yproxy+yma+yar
 
     return(list(y=y,ysig=ysig,ytrend=ytrend,yproxy=yproxy,yred=yma+yar))
@@ -669,23 +691,13 @@ CircularRes <- function(par,df){
         if(any(neglnLs<0)) neglnLs[neglnLs<0] <- 0
         sqrneglnLs <- sqrt(neglnLs)
     }else{
+###SHO Gaussian process through the dense Cholesky solver (the celerite R port
+###formerly used here disagrees with a direct solve and is no longer used)
         t <- df$data[,1]
-        logProt <- c(df$logProt,par$logProt)
-        logtauGP <- c(df$logtauGP,par$logtauGP)
-        sigmaGP <- c(df$sigmaGP,par$sigmaGP)
-        Q <- exp(logtauGP)*pi/exp(logProt)
-#cat('Q=',Q,'\n')
-#cat('w0=',2*pi/exp(logProt),'\n')
-        term <- sho.term(S0=sigmaGP,Q=Q,w0=2*pi/exp(logProt))
-        out <- celerite(t=t,y=y-v,dy=dy,s=sj,term=term)
-#        cat('out$lndetKs=',out$lndetKs,'\n')
-#        cat('out$ykys=',out$ykys,'\n')
-        neglogl <- 1/2*out$lndetKs+1/2*out$ykys+length(t)/2*log(2*pi)
-#        cat('min(neglogl)=',min(neglogl),'\n')
-        neglogl <- neglogl+off
-#        if(any(neglogl<0)) cat('neglogl=',neglogl,'\n')
-        if(any(neglogl<0)) neglogl[neglogl<0] <- 0
-        sqrneglnLs <- sqrt(neglogl)#for likelihood maximization
+        logProt <- c(df$logProt,par$logProt)[1]
+        logtauGP <- c(df$logtauGP,par$logtauGP)[1]
+        sigmaGP <- c(df$sigmaGP,par$sigmaGP)[1]
+        sqrneglnLs <- gp_res(t,y-v,dy,sj,sigmaGP,logProt,logtauGP)
     }
     return(sqrneglnLs)
 }
@@ -776,7 +788,7 @@ sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,star
             start <- detIni(start0,par.low,par.up)
         }
         out0 <- nls.lm(par = start,lower=par.low,upper=par.up,fn = CircularRes,df=df,control=nls.lm.control(maxiter=1024))
-        Ls <- c(Ls,-sum(out0$fvec^2-off))
+        Ls <- c(Ls,-sum(out0$fvec^2-off-(if(GP) off.gp else 0)))
         par.ini <- rbind(par.ini,unlist(start))
     }
     start <- as.list(par.ini[which.max(Ls),])
@@ -784,8 +796,9 @@ sopt <- function(omega,phi,Nma,Nar,Indices,data,type='noise',par.low,par.up,star
     out <- nls.lm(par = start,lower=par.low,upper=par.up,fn = CircularRes,df=df,control=nls.lm.control(maxiter=1024))
 
 #####retrieve parameters
-    logL <- -sum(out$fvec^2-off)
-    lnls <- -(out$fvec^2-off)
+    off1 <- off+(if(GP) off.gp else 0)
+    logL <- -sum(out$fvec^2-off1)
+    lnls <- -(out$fvec^2-off1)
     pars <- opt.par0 <- opt.par <- as.list(coef(out))
     tmp <- CircularSig(par=opt.par,df = df)
     yp.full <- tmp$v
@@ -1109,7 +1122,14 @@ multiset_design <- function(t, set.id, omega=NULL, trend=TRUE, lag.terms=NULL, N
 }
 
 multiset_wls <- function(t, y, dy, set.id, omega=NULL, trend=TRUE, Nar=0, Nma=0, residuals=NULL,
-                         tau=NULL, tauAR=NULL, signal=NULL, Nh=1){
+                         tau=NULL, tauAR=NULL, signal=NULL, Nh=1, R=NULL){
+###R: Cholesky factor of a GP covariance; when given the fit is generalized
+###least squares under that covariance and the AR/MA lag terms are not used
+    if(!is.null(R)){
+        X <- multiset_design(t=t,set.id=set.id,omega=omega,trend=trend,lag.terms=NULL,Nh=Nh)
+        if(!is.null(signal)) X <- cbind(signal,X)
+        return(gp_gls(R,X,y))
+    }
     lag.terms <- multiset_lag_terms(y=y,set.id=set.id,Nar=Nar,Nma=Nma,residuals=residuals,
                                     t=t,tau=tau,tauAR=tauAR)
     X <- multiset_design(t=t,set.id=set.id,omega=omega,trend=trend,lag.terms=lag.terms,Nh=Nh)
@@ -1155,11 +1175,11 @@ multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NU
     opt.pars <- c()
     yfits <- matrix(NA,nrow=length(t),ncol=length(omegas))
     residuals <- matrix(NA,nrow=length(t),ncol=length(omegas))
-    fit.at <- function(om){
-        fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=om,trend=trend,Nar=Nar,Nma=Nma,residuals=base$res,Nh=Nh)
+    fit.at <- function(om,nh=Nh){
+        fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=om,trend=trend,Nar=Nar,Nma=Nma,residuals=base$res,Nh=nh)
         if(any(as.integer(Nma)>0)){
             for(iter in 1:max.iter){
-                fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=om,trend=trend,Nar=Nar,Nma=Nma,residuals=fit$res,Nh=Nh)
+                fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=om,trend=trend,Nar=Nar,Nma=Nma,residuals=fit$res,Nh=nh)
             }
         }
         fit
@@ -1184,7 +1204,7 @@ multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NU
     res <- residuals[,inds[1]]
     if(Nh>1){
 ###resolve the P/2P ambiguity of a multi-harmonic fit at the peak
-        P1 <- harmonic_period_check(opt.par,Popt)
+        P1 <- harmonic_period_check(Popt,function(p) fit.at(2*pi/p,nh=1)$logL)
         if(P1!=Popt){
             Popt <- P1
             fit <- fit.at(2*pi/P1)
@@ -1208,9 +1228,261 @@ multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NU
                 multi_set=TRUE,set.id=set.id,trend=trend,Nma=Nma,Nar=Nar))
 }
 
+###########################################################################
+####Gaussian-process red noise with the SHO (stochastically driven damped
+####harmonic oscillator) kernel of Foreman-Mackey et al. 2017, eq. 24, in the
+####parametrization already used by the celerite path of BFP:
+####  S0 = sigmaGP, w0 = 2 pi / Prot, Q = tauGP * pi / Prot.
+####The dense covariance and its Cholesky factor are used for generalized
+####least squares over the linear parameters (offsets, trend, harmonics),
+####which is exact and fast enough for the data sizes Agatha deals with.
+###########################################################################
+gp_sho_cov <- function(t, sigmaGP, logProt, logtauGP, dy=NULL, sj=0){
+    S0 <- sigmaGP
+    Prot <- exp(logProt)
+    Q <- exp(logtauGP)*pi/Prot
+    w0 <- 2*pi/Prot
+    tau <- abs(outer(t,t,'-'))
+    eta <- sqrt(abs(1-1/(4*Q^2)))
+    A <- S0*w0*Q*exp(-w0*tau/(2*Q))
+    if(Q<0.5){
+        K <- A*(cosh(eta*w0*tau)+sinh(eta*w0*tau)/(2*eta*Q))
+    }else if(abs(Q-0.5)<1e-12){
+        K <- A*2*(1+w0*tau)
+    }else{
+        K <- A*(cos(eta*w0*tau)+sin(eta*w0*tau)/(2*eta*Q))
+    }
+    if(!is.null(dy)) diag(K) <- diag(K)+dy^2+sj^2
+    K
+}
+
+gp_chol <- function(K){
+###upper Cholesky factor R with K = R'R, adding a little jitter if needed
+    R <- try(chol(K),TRUE)
+    jit <- 1e-10*mean(diag(K))
+    while(class(R)[1]=='try-error' && jit<1e-2*mean(diag(K))){
+        R <- try(chol(K+diag(jit,nrow(K))),TRUE)
+        jit <- jit*10
+    }
+    if(class(R)[1]=='try-error') return(NULL)
+    R
+}
+
+gp_gls <- function(R, X, y){
+###generalized least squares for y = X b + GP + white noise, given the
+###Cholesky factor R of the full covariance; returns the log-likelihood at the
+###optimal b, which is what the periodogram compares between trial periods
+    X <- as.matrix(X)
+    Xw <- base::backsolve(R,X,transpose=TRUE)
+    yw <- base::backsolve(R,y,transpose=TRUE)
+    fit <- lm.fit(Xw,yw)
+    coef <- fit$coefficients
+    coef[is.na(coef)] <- 0
+    names(coef) <- colnames(X)
+    resw <- as.numeric(yw-Xw%*%coef)
+    yfit <- as.numeric(X%*%coef)
+    logL <- -0.5*sum(resw^2)-sum(log(diag(R)))-length(y)/2*log(2*pi)
+    list(coef=coef,yfit=yfit,res=y-yfit,logL=logL,design=X)
+}
+
+gp_predict <- function(t, R, sigmaGP, logProt, logtauGP, r){
+###conditional mean of the GP at the data times given residuals r
+    Kgp <- gp_sho_cov(t,sigmaGP,logProt,logtauGP,dy=NULL)
+    alpha <- base::backsolve(R,base::backsolve(R,r,transpose=TRUE))
+    as.numeric(Kgp%*%alpha)
+}
+
+gp_predict_par <- function(t, dy, par, df, r){
+###same, with the hyperparameters taken from a fit (par) and/or fixed values (df)
+    par <- as.list(par)
+    sigmaGP <- c(df$sigmaGP,par$sigmaGP)[1]
+    logProt <- c(df$logProt,par$logProt)[1]
+    logtauGP <- c(df$logtauGP,par$logtauGP)[1]
+    sj <- if(is.null(par$sj)) 0 else par$sj
+    if(any(is.null(c(sigmaGP,logProt,logtauGP)))) return(rep(0,length(t)))
+    R <- gp_chol(gp_sho_cov(t,sigmaGP,logProt,logtauGP,dy=dy,sj=sj))
+    if(is.null(R)) return(rep(0,length(t)))
+    gp_predict(t,R,sigmaGP,logProt,logtauGP,r)
+}
+
+gp_fit_hyper <- function(t, y, dy, X, logProt.fix=NULL, start=NULL, Nstart=3){
+###maximum-likelihood SHO hyperparameters with the linear parameters of X
+###profiled out by GLS. Optimized in (log sigma, log Prot, log tauGP) where
+###sigma^2 = S0 w0 Q is the GP variance, which is much better conditioned
+###than S0 itself. With logProt.fix the rotation period is held fixed (the
+###stochastic periodogram scans it) and only sigma and tauGP are fitted.
+    ts <- sort(unique(t))
+    dt <- max(min(diff(ts)),1e-3)
+    span <- max(t)-min(t)
+    sdy <- sd(y)
+    lower <- c(logsig=log(1e-3*sdy),logProt=log(2*dt),logtauGP=log(dt))
+    upper <- c(logsig=log(10*sdy),logProt=log(2*span),logtauGP=log(10*span))
+    tovec <- function(v){
+        lp <- if(is.null(logProt.fix)) v[['logProt']] else logProt.fix
+        Q <- exp(v[['logtauGP']])*pi/exp(lp)
+        w0 <- 2*pi/exp(lp)
+        c(sigmaGP=exp(2*v[['logsig']])/(w0*Q),logProt=lp,logtauGP=v[['logtauGP']])
+    }
+    obj <- function(v){
+        names(v) <- free
+        h <- tovec(v)
+        K <- gp_sho_cov(t,h[['sigmaGP']],h[['logProt']],h[['logtauGP']],dy=dy)
+        R <- gp_chol(K)
+        if(is.null(R)) return(1e10)
+        ll <- gp_gls(R,X,y)$logL
+        if(!is.finite(ll)) 1e10 else -ll
+    }
+    free <- if(is.null(logProt.fix)) c('logsig','logProt','logtauGP') else c('logsig','logtauGP')
+    starts <- list()
+    if(!is.null(start)){
+        starts[[1]] <- start[free]
+    }else{
+        lps <- if(is.null(logProt.fix)) log(span/c(50,10,3))[1:Nstart] else rep(logProt.fix,1)
+        for(lp in lps){
+            s <- c(logsig=log(max(sdy/2,1e-3*sdy*1.1)),logProt=lp,logtauGP=lp)
+            starts[[length(starts)+1]] <- s[free]
+        }
+    }
+    best <- NULL
+    for(s in starts){
+        s <- pmin(pmax(s,lower[free]+1e-6),upper[free]-1e-6)
+        o <- try(optim(s,obj,method='L-BFGS-B',lower=lower[free],upper=upper[free],control=list(maxit=200)),TRUE)
+        if(class(o)[1]=='try-error') next
+        if(is.null(best) || o$value<best$value) best <- o
+    }
+    if(is.null(best)) return(NULL)
+    v <- best$par
+    names(v) <- free
+    h <- tovec(v)
+    K <- gp_sho_cov(t,h[['sigmaGP']],h[['logProt']],h[['logtauGP']],dy=dy)
+    R <- gp_chol(K)
+    list(sigmaGP=h[['sigmaGP']],logProt=h[['logProt']],logtauGP=h[['logtauGP']],
+         sigma=exp(v[['logsig']]),logL=-best$value,R=R,par=v)
+}
+
+off.gp <- 10
+gp_res <- function(t, r, dy, sj, sigmaGP, logProt, logtauGP){
+###per-point terms whose squares sum to -logL + N*off.gp, for nls.lm:
+###-logL = 0.5 sum z_i^2 + sum log R_ii + N/2 log 2pi with z = R^{-T} r. The
+###constant off.gp keeps every term positive (log R_ii can be negative for
+###precise data) and is removed again where the log-likelihood is read off.
+    R <- gp_chol(gp_sho_cov(t,sigmaGP,logProt,logtauGP,dy=dy,sj=sj))
+    if(is.null(R)) return(rep(1e3,length(t)))
+    z <- base::backsolve(R,r,transpose=TRUE)
+    v <- 0.5*z^2+log(diag(R))+0.5*log(2*pi)+off.gp
+    v[v<0] <- 0
+    sqrt(v)
+}
+
+multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA,
+                                    tspan=NULL, sampling='combined', section=1,
+                                    trend=TRUE, Nh=1, noise.only=FALSE){
+###Multi-set periodogram with a shared SHO Gaussian process for the red noise
+###(the star is common to all data sets) plus one offset per data set and a
+###shared trend. Signal mode: the hyperparameters are fitted once on the
+###signal-free model and held fixed while the harmonics are scanned by GLS,
+###the standard GP-whitened periodogram. Stochastic mode (noise.only): no
+###signal; the rotation period of the kernel is scanned instead and sigma and
+###tauGP are refitted at each trial period, against the white-noise baseline.
+    unit <- 1
+    t <- (t-min(t))/unit
+    set.id <- factor(set.id)
+    data <- cbind(t,y,dy)
+    if(is.null(tspan)) tspan <- max(t)-min(t)
+    if(is.na(fmin)) fmin <- 1/(tspan*ofac)
+    if(is.null(fmax)) fmax <- 0.5*length(y)/tspan
+    f <- fsample(fmin,fmax,sampling,section,ofac,unit)
+    P <- unit/f
+    Ndata <- length(t)
+    X0 <- multiset_design(t=t,set.id=set.id,omega=NULL,trend=trend,lag.terms=NULL)
+    white <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend)
+    if(!noise.only){
+        hyp <- gp_fit_hyper(t,y,dy,X0)
+        if(is.null(hyp) || is.null(hyp$R)) stop('GP hyperparameter fit failed for the multi-set model')
+        R <- hyp$R
+        base <- gp_gls(R,X0,y)
+        fit.at <- function(om,nh=Nh) gp_gls(R,cbind(harmonic_columns(t,om,nh),X0),y)
+        logLs <- rep(NA,length(f))
+        opt.pars <- c()
+        for(kk in 1:length(f)){
+            fit <- fit.at(2*pi*f[kk])
+            logLs[kk] <- fit$logL
+            opt.pars <- rbind(opt.pars,fit$coef)
+        }
+        Nextra <- 2*Nh
+        logBF <- logLs-base$logL-Nextra/2*log(Ndata)
+        inds <- sort(logBF,decreasing=TRUE,index.return=TRUE)$ix
+        Popt <- P[inds[1]]
+        if(Nh>1){
+            P1 <- harmonic_period_check(Popt,function(p) fit.at(2*pi/p,nh=1)$logL)
+            Popt <- P1
+        }
+        fit <- fit.at(2*pi/Popt)
+        opt.par <- c(fit$coef,sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP)
+        opt.par.top <- opt.pars[inds[1:min(10,length(inds))],,drop=FALSE]
+        ysig <- harmonic_signal(fit$coef,2*pi/Popt,t)
+        yfull <- fit$yfit
+        yred <- gp_predict(t,R,hyp$sigmaGP,hyp$logProt,hyp$logtauGP,fit$res)
+        res <- fit$res-yred
+        LogLike0 <- base$logL
+        df <- list(data=data,set.id=set.id,multi_set=TRUE,Nma=0,Nar=0,NI=0,type='period',GP=TRUE,
+                   sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP)
+        gp <- list(sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP,sigma=hyp$sigma)
+        pars <- opt.pars
+    }else{
+###stochastic: scan the rotation period of the kernel
+        logLs <- rep(NA,length(f))
+        opt.pars <- c()
+        start <- NULL
+        for(kk in 1:length(f)){
+            hyp <- gp_fit_hyper(t,y,dy,X0,logProt.fix=log(P[kk]),start=start,Nstart=1)
+            if(is.null(hyp)){ logLs[kk] <- NA; opt.pars <- rbind(opt.pars,rep(NA,ncol(X0)+3)); next }
+            start <- hyp$par
+            logLs[kk] <- hyp$logL
+            cf <- gp_gls(hyp$R,X0,y)$coef
+            opt.pars <- rbind(opt.pars,c(cf,sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP))
+        }
+###sigma and tauGP are the extra parameters; the scanned period plays the
+###role of the signal period in the ARMA stochastic periodogram
+        Nextra <- 2
+        logBF <- logLs-white$logL-Nextra/2*log(Ndata)
+        logBF[is.na(logBF)] <- -Inf
+        inds <- sort(logBF,decreasing=TRUE,index.return=TRUE)$ix
+        Popt <- P[inds[1]]
+        hyp <- gp_fit_hyper(t,y,dy,X0,logProt.fix=log(Popt),Nstart=1)
+        R <- hyp$R
+        fit <- gp_gls(R,X0,y)
+        opt.par <- c(fit$coef,sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP)
+        opt.par.top <- opt.pars[inds[1:min(10,length(inds))],,drop=FALSE]
+        ysig <- rep(0,Ndata)
+        yfull <- fit$yfit
+        yred <- gp_predict(t,R,hyp$sigmaGP,hyp$logProt,hyp$logtauGP,fit$res)
+        res <- fit$res-yred
+        LogLike0 <- white$logL
+        df <- list(data=data,set.id=set.id,multi_set=TRUE,Nma=0,Nar=0,NI=0,type='noise',GP=TRUE,
+                   sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP)
+        gp <- list(sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP,sigma=hyp$sigma)
+        pars <- opt.pars
+    }
+    ps <- P[inds[1:min(5,length(inds))]]
+    power.opt <- logBF[inds[1:min(5,length(inds))]]
+    list(data=data,logBF=logBF,logLs=logLs,llmax=max(logLs,na.rm=TRUE),lnbfs=matrix(NA,nrow=length(P),ncol=Ndata),
+         P=P,Popt=Popt,Popts=P[inds[1:min(10,length(inds))]],logBF.opt=logBF[inds[1:min(10,length(inds))]],
+         par.opt=opt.par,opt.par=opt.par.top,res=res,res.nst=res,res.n=res,res.s=res+yred,
+         res.st=res,res.nt=res,ysig=ysig,yred=yred,yfull=yfull,base.fit=white,pars=pars,df=df,
+         power=logBF,ps=ps,power.opt=power.opt,sig.level=c(-Nextra/2*log(Ndata),0,log(150)),
+         ParLow=rep(NA,length(opt.par)),ParUp=rep(NA,length(opt.par)),LogLike0=LogLike0,
+         multi_set=TRUE,noise_only=noise.only,noise.model='GP',gp=gp,gp.R=R,set.id=set.id,trend=trend,Nma=0,Nar=0)
+}
+
 BFP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NA,
                          tspan=NULL, sampling='combined', section=1, progress=FALSE,
-                         noise.only=FALSE, Nh=1){
+                         noise.only=FALSE, Nh=1, noise.model='ARMA'){
+    if(noise.model=='GP'){
+        return(multiset_gp_periodogram(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmax=fmax,fmin=fmin,
+                                       tspan=tspan,sampling=sampling,section=section,trend=TRUE,
+                                       Nh=Nh,noise.only=noise.only))
+    }
     if(noise.only & !any(as.integer(Nma)>0) & !any(as.integer(Nar)>0)){
         warning('A purely stochastic multi-set fit needs at least one AR or MA component; fitting the periodic model instead.')
         noise.only <- FALSE
@@ -1225,12 +1497,17 @@ BFP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin
 }
 
 MLP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NULL,
-                         tspan=NULL, sampling='combined', section=1, Nh=1){
+                         tspan=NULL, sampling='combined', section=1, Nh=1, noise.model='ARMA'){
     if(is.null(fmin)){
         fmin <- NA
     }
-    out <- multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmax=fmax,fmin=fmin,
-                                tspan=tspan,sampling=sampling,section=section,trend=TRUE,Nh=Nh)
+    if(noise.model=='GP'){
+        out <- multiset_gp_periodogram(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmax=fmax,fmin=fmin,
+                                       tspan=tspan,sampling=sampling,section=section,trend=TRUE,Nh=Nh)
+    }else{
+        out <- multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmax=fmax,fmin=fmin,
+                                    tspan=tspan,sampling=sampling,section=section,trend=TRUE,Nh=Nh)
+    }
     out$power <- out$power-max(out$power)
     out$logBF <- out$power
     return(out)
@@ -1276,13 +1553,13 @@ multiset_kepler_curve <- function(par, t){
 }
 
 multiset_kepler_wls <- function(t, y, dy, set.id, P, e, Mo, trend=TRUE, Nar=0, Nma=0,
-                                residuals=NULL, max.iter=3){
+                                residuals=NULL, max.iter=3, R=NULL){
 ###Weighted least squares for a shared Keplerian signal, one offset per data set,
 ###a shared trend and per-data-set AR/MA lag terms
     kep <- multiset_kepler_basis(t=t,P=P,e=e,Mo=Mo)
     fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=NULL,trend=trend,Nar=Nar,Nma=Nma,
-                        residuals=residuals,signal=kep)
-    if(any(as.integer(Nma)>0)){
+                        residuals=residuals,signal=kep,R=R)
+    if(is.null(R) && any(as.integer(Nma)>0)){
         for(iter in 1:max.iter){
             fit <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,omega=NULL,trend=trend,Nar=Nar,Nma=Nma,
                                 residuals=fit$res,signal=kep)
@@ -1328,9 +1605,10 @@ KeplerFit.multiset <- function(per, frac=0.2, emax=0.95, max.iter=3){
     }
     Plow <- max((1-frac)*Popt,1e-6)
     Pup <- (1+frac)*Popt
+    R <- per$gp.R
     fit.at <- function(v){
         multiset_kepler_wls(t=t,y=y,dy=dy,set.id=set.id,P=v[1],e=v[2],Mo=v[3],
-                            trend=trend,Nar=Nar,Nma=Nma,max.iter=max.iter)
+                            trend=trend,Nar=Nar,Nma=Nma,max.iter=max.iter,R=R)
     }
     obj <- function(v){
         out <- try(fit.at(v),TRUE)
@@ -1374,6 +1652,11 @@ KeplerFit.multiset <- function(per, frac=0.2, emax=0.95, max.iter=3){
     }
     fit <- fit.at(best)
     coef <- fit$coef
+    if(!is.null(R)){
+###remove the GP prediction from the residual so the phase plot shows white scatter
+        yred <- gp_predict(t,R,per$gp$sigmaGP,per$gp$logProt,per$gp$logtauGP,fit$res)
+        fit$res <- fit$res-yred
+    }
     amp <- multiset_kepler_amp(as.numeric(coef['kc']),as.numeric(coef['ks']))
     ParKep <- list(P1=as.numeric(best[1]),K1=as.numeric(amp['K']),e1=as.numeric(best[2]),
                    omega1=as.numeric(amp['omega']),Mo1=as.numeric(best[3]))
@@ -1506,13 +1789,16 @@ par_to_V <- function(par){
     list(V1=V1,V2=V2)
 }
 
-harmonic_period_check <- function(par, P){
+harmonic_period_check <- function(P, logL1){
 ###A multi-harmonic periodogram is ambiguous between P and 2P: a signal with its
-###fundamental at P fits a 2P model through the first-harmonic columns. If the
-###fitted first harmonic dominates the fundamental the true period is P/2.
-    V <- par_to_V(par)
-    if(is.na(V$V2)) return(P)
-    if(Mod(V$V2)>Mod(V$V1)) P/2 else P
+###fundamental at P also fits a 2P model through the first-harmonic columns, and
+###with sparse sampling the spurious 2P fundamental can even carry a large
+###amplitude. The robust test is explanatory power: logL1(P) must return the
+###log-likelihood of a single-sinusoid (Nh=1) fit at P; the period whose single
+###sinusoid explains the data better is the fundamental.
+    l1 <- logL1(P)
+    l2 <- logL1(P/2)
+    if(is.finite(l2) && is.finite(l1) && l2>l1) P/2 else P
 }
 
 hansen_X <- function(k, e, N=100){
@@ -1645,6 +1931,10 @@ MLP <- function(t, y, dy, Nma=0, Nar=0,mar.type='part',sj=0,logtau=NULL,ofac=1,f
         opt.par <- tmp$par
         if(MLP.type=='sub'){
             y <- tmp$res
+            if(GP){
+###the residual of sopt() still contains the GP component; remove its conditional mean
+                y <- y-gp_predict_par(t,dy,tmp$par,tmp$df,tmp$res)
+            }
             data[,2] <- y
             vars$y <- y
             vars$data <- data
@@ -1699,7 +1989,8 @@ MLP <- function(t, y, dy, Nma=0, Nar=0,mar.type='part',sj=0,logtau=NULL,ofac=1,f
     Popt <- P[inds[1]]
     if(Nh>1){
 ###resolve the P/2P ambiguity of a multi-harmonic fit at the peak
-        P1 <- harmonic_period_check(opt.par,Popt)
+        logL1 <- function(p) sopt(omega=2*pi/p,phi=0,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars$par.low,par.up=vars$par.up,start=vars$start,noise.only=FALSE,GP=FALSE,gp.par=rep(NA,3),Nrep=1,Nh=1)$logL
+        P1 <- harmonic_period_check(Popt,logL1)
         if(P1!=Popt){
             Popt <- P1
             omega.opt <- 2*pi/P1
@@ -2644,7 +2935,11 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
     logBF.opt <- logBF[inds]
     if(Nh>1 & !noise.only){
 ###resolve the P/2P ambiguity of a multi-harmonic fit at the peak
-        P1 <- harmonic_period_check(par.opt,Popt[1])
+        logL1 <- function(p){
+            v1 <- c(vars1,local.notation(t,y,dy,Indices,NI,2*pi/p,phi))
+            sopt(omega=2*pi/p,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=v1$par.low,par.up=v1$par.up,start=v1$start,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=1,Nh=1)$logL
+        }
+        P1 <- harmonic_period_check(Popt[1],logL1)
         if(P1!=Popt[1]){
             omega1 <- 2*pi/P1
             vars1 <- c(vars1,local.notation(t,y,dy,Indices,NI,omega1,phi))
@@ -2928,7 +3223,7 @@ KeplerFit <- function(per,data,basis='natural'){
 #        out <- nls.lm(par = ParIni,lower=ParLow,upper=ParUp,fn = KeplerRes,df=df,control=nls.lm.control(maxiter=1024,ptol=eps,gtol=eps,ftol=eps))
         if(class(out)!='try-error'){
             pars <- rbind(pars,coef(out))
-            ll <- c(ll,-sum(out$fvec^2))#logLike
+            ll <- c(ll,-sum(out$fvec^2)+(if(isTRUE(df$GP)) length(out$fvec)*off.gp else 0))#logLike
             n <- n+1
         }
 #cat('j=',j,'\n')

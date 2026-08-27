@@ -117,8 +117,17 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
         if(input$sequence) sliderInput("Nsig.max", "Maximum number of signals", min = 2, max = 10,value=2,step=1)
     })
 
+    output$noise.model <- renderUI({
+        if(is.null(input$per.type)) return()
+        if(any(input$per.type=='MLP'|input$per.type=='BFP')){
+            radioButtons('noise.model','Red noise model',
+                         c('ARMA (per data set)'='ARMA','Gaussian process (SHO kernel, shared)'='GP'),selected='ARMA')
+        }
+    })
+
     output$nar <- renderUI({
     if(is.null(input$per.target) | is.null(input$per.type)) return()
+    if(!is.null(input$noise.model) && input$noise.model=='GP') return()
     if(any(input$per.type=='MLP'|input$per.type=='BFP')){
         lapply(1:Ntarget(), function(i){
             selectizeInput(paste0("Nar",i),paste('Number of AR components for',input$per.target[i]),choices = 0:10,selected = 0,multiple=FALSE)}
@@ -128,6 +137,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
 
   output$nma <- renderUI({
     if(is.null(input$per.target) | is.null(input$per.type)) return()
+    if(!is.null(input$noise.model) && input$noise.model=='GP') return()
     if(any(input$per.type=='MLP'|input$per.type=='BFP')){
         lapply(1:Ntarget(), function(i){
             selectizeInput(paste0("Nma",i),paste('Number of MA components for',input$per.target[i]),choices = 0:10,selected = 0,multiple=FALSE)}
@@ -631,6 +641,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
           vals$Niter <- 0
       }
       vals$Nh <- if(is.null(input$Nh)) 1 else as.integer(input$Nh)
+      vals$noise.model <- if(is.null(input$noise.model)) 'ARMA' else input$noise.model
       return(vals)
   })
 

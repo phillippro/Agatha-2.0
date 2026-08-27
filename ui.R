@@ -81,6 +81,7 @@ shinyUI(fluidPage(
                          helpText("If more than one data set is selected, BFP and MLP fit a shared circular signal with one RV offset per data set."),
                          uiOutput('per.type'),
                          helpText("There could be errors in the calculation of the BFP if the data is small (e.g. less than 20 data points) or not well sampled. "),
+                         uiOutput('noise.model'),
                          uiOutput('nar'),
                          uiOutput('nma'),
                          uiOutput('nh'),

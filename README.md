@@ -261,7 +261,44 @@ The analytical estimate is exact on exact Fourier coefficients; on real data its
 limited by how well `V1`, `V2` can be measured from sparse sampling, which is why it is used
 as a seed rather than as the final answer.
 
-## 5. MCMC sampling
+## 5. Red noise models: ARMA or Gaussian process
+
+`Red noise model` in the 1D UI (`noise.model` in `calc.1Dper()`) selects how correlated noise
+is treated in BFP and MLP:
+
+- `ARMA` (default): the moving-average / auto-regressive terms of the original Agatha, with
+  per-data-set orders.
+- `GP`: a Gaussian process with the SHO (stochastically driven damped harmonic oscillator)
+  kernel of Foreman-Mackey et al. (2017), parametrized by `sigmaGP` (S0), `logProt` and
+  `logtauGP` (`Q = tauGP*pi/Prot`). For several data sets one GP is shared, because the
+  activity belongs to the star, with one offset per data set and a shared trend.
+
+How the GP enters each computation:
+
+- Single data set, BFP: the hyperparameters are free at every trial period and fitted together
+  with the signal by `sopt()`, exactly as the ARMA parameters are. MLP: the GP is fitted on
+  the signal-free model, its conditional mean is subtracted, and the marginalized periodogram
+  is computed on the residual (`MLP.type='sub'`).
+- Several data sets (`multiset_gp_periodogram`): the hyperparameters are fitted once on the
+  signal-free model and held fixed while the harmonics are scanned by generalized least
+  squares under the GP covariance (the GP-whitened periodogram); the Keplerian refit uses the
+  same covariance.
+- `Stochastic` signal type with `GP`: no periodic signal; the rotation period of the kernel is
+  scanned and `sigma`, `tauGP` are refitted at each trial period against the white-noise
+  baseline, so the periodogram shows the evidence for quasi-periodic red noise.
+- Phase plots and residuals have the GP conditional mean removed.
+
+The GP likelihood is computed with a dense Cholesky solve (`gp_sho_cov`, `gp_gls`,
+`gp_res`), validated against an independent kernel implementation and a direct solve. The
+celerite R port that an earlier, unreachable GP path relied on disagrees with a direct solve
+and is no longer used. The dense solve costs `O(N^3)` per likelihood evaluation, which is
+immediate for a few hundred points; for several thousand points prefer `ARMA` or a coarser
+`ofac`.
+
+MCMC sampling is not yet available with the GP noise model; the maximum-likelihood fit is
+returned with a warning.
+
+## 6. MCMC sampling
 
 When `MCMC sample size` is set to a non-zero value, the signal found by the periodogram is
 constrained with a parallel-tempering (replica-exchange) MCMC. A ladder of chains samples
@@ -299,7 +336,7 @@ The behaviour is controlled by the arguments of `mcfit()` and `sigfit()`:
 `run.ptmcmc()` also accepts `adapt.ladder`, `adapt.window`, `adapt.nu`, `adapt.t0`,
 `max.extend` and `Rhat.max` for finer control.
 
-## 6. Roadmap
+## 7. Roadmap
 
 >Develop a R markdown code to visualize the results
 

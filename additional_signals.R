@@ -18,12 +18,12 @@ for(jj in 2:Nsig.max){
         rr <- res
     }
     if(per.type.seq=='BFP'){
-        rv.ls <- BFP(t,rr,dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,model.type='man',fmin=frange[1],fmax=frange[2],quantify=quantify,renew=renew,progress=progress,noise.only=noise.only,Nh=Nh)
+        rv.ls <- BFP(t,rr,dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,model.type='man',fmin=frange[1],fmax=frange[2],quantify=quantify,renew=renew,progress=progress,noise.only=noise.only,Nh=Nh,GP=GP,gp.par=gp.par)
         ylab <- 'ln(BF)'
         name <- 'logBF'
     }
     if(per.type.seq=='MLP'){
-        rv.ls <- MLP(t,rr,dy,Nma=Nma,Nar=Nar,ofac=ofac,mar.type='part',model.type='man',fmin=frange[1],fmax=frange[2],opt.par=NULL,Indices=Indices,MLP.type=MLP.type,noise.only=noise.only,Nh=Nh)
+        rv.ls <- MLP(t,rr,dy,Nma=Nma,Nar=Nar,ofac=ofac,mar.type='part',model.type='man',fmin=frange[1],fmax=frange[2],opt.par=NULL,Indices=Indices,MLP.type=MLP.type,noise.only=noise.only,Nh=Nh,GP=GP,gp.par=gp.par)
         ylab <- expression('log(ML/'*ML[max]*')')
         name <- 'logML'
     }

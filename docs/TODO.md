@@ -37,7 +37,21 @@ Completed in the Fourier/harmonic implementation (Delisle et al. 2016):
 1. P/2P disambiguation at the peak (`harmonic_period_check`).
 1. Added `tests/test_fourier_kepler.R`.
 
+Completed in the GP implementation:
+
+1. `noise.model='GP'` (shared SHO kernel) for single- and multi-set BFP/MLP, the stochastic
+   periodogram (scan of `Prot`) and the Keplerian refits, on a dense Cholesky solver
+   (`gp_sho_cov`, `gp_gls`, `gp_res`, `gp_fit_hyper`, `multiset_gp_periodogram`).
+1. The single-set GP likelihood no longer uses the celerite R port, which disagrees with a
+   direct solve by ~15 in lnL on a 60-point test and whose `sho.term`/`celerite` were being
+   overwritten by `mcmc_func.R` in the app anyway.
+1. P/2P disambiguation of multi-harmonic peaks now compares single-sinusoid likelihoods at
+   P and P/2 instead of harmonic amplitudes (amplitudes misled on sparse data).
+1. Added `tests/test_gp_periodogram.R`.
+
 Remaining follow-up work:
+
+1. MCMC with the GP noise model (the `mcfit` data wrapper is ARMA-only).
 
 1. Extend the multi-set model to proxy terms.
 1. Extend MCMC refinement to multi-set fits; `sigfit.multiset()` still warns and returns the
