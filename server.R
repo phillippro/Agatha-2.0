@@ -121,16 +121,16 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
         if(is.null(input$per.type)) return()
         if(any(input$per.type=='MLP'|input$per.type=='BFP')){
             radioButtons('noise.model','Red noise model',
-                         c('ARMA (per data set)'='ARMA','Gaussian process (SHO kernel, shared)'='GP'),selected='ARMA')
+                         c('ARMA (per data set)'='ARMA','Gaussian process (quasi-periodic SHO kernel, shared by all data sets)'='GP'),selected='ARMA')
         }
     })
 
     output$gp.par <- renderUI({
         if(is.null(input$noise.model) || input$noise.model!='GP') return()
         tagList(
-            numericInput('gp.Prot','GP rotation period [day] (e.g. from photometry; leave empty to fit it)',value=NA,min=0),
-            numericInput('gp.tau','GP coherence time scale [day] (leave empty to fit it)',value=NA,min=0),
-            helpText('The GP amplitude is always fitted. With the Stochastic signal type the rotation period is scanned and a fixed value is ignored.')
+            numericInput('gp.Prot','GP oscillation period [time unit of the data] (quasi-periodicity of the correlated noise, e.g. a stellar rotation period from photometry; leave empty to fit it)',value=NA,min=0),
+            numericInput('gp.tau','GP damping time scale [time unit of the data] (how long correlations stay coherent, e.g. an active-region lifetime; leave empty to fit it)',value=NA,min=0),
+            helpText('The GP amplitude is always fitted. If the damping time scale is much shorter than the oscillation period the kernel is overdamped and the period is not constrained. With the Stochastic signal type the oscillation period is scanned and a fixed value is ignored.')
         )
     })
 

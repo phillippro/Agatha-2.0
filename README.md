@@ -292,17 +292,22 @@ How the GP enters each computation:
   (GP-whitened) scan is kept only as an option (`gp.fit='fixed'`) and as the MLP default,
   where the noise is fixed before marginalizing by construction. The Keplerian refit uses the
   covariance found at the peak.
-- `Stochastic` signal type with `GP`: no periodic signal; the rotation period of the kernel is
+- `Stochastic` signal type with `GP`: no periodic signal; the oscillation period of the kernel is
   scanned and `sigma`, `tauGP` are refitted at each trial period against the white-noise
   baseline, so the periodogram shows the evidence for quasi-periodic red noise.
 - Phase plots and residuals have the GP conditional mean removed.
-- When `GP` is selected the panel offers `GP rotation period` and `GP coherence time scale`.
-  Leave a field empty to fit that hyperparameter; enter a value (e.g. a photometric rotation
-  period) to hold it fixed. The amplitude is always fitted. In the API this is
+- When `GP` is selected the panel offers `GP oscillation period` (the quasi-periodicity of
+  the correlated noise; for RV data the stellar rotation period) and `GP damping time scale`
+  (how long the correlations stay coherent; for RV data the active-region lifetime), both in
+  the time unit of the data. Leave a field empty to fit that hyperparameter; enter a value
+  (e.g. a rotation period from photometry) to hold it fixed. The amplitude is always fitted.
+  If the damping time scale is much shorter than the oscillation period the kernel is
+  overdamped and the period is not constrained by the data. In the API this is
   `gp.par=c(sigmaGP, logProt, logtauGP)` with `NA` for free, on `BFP()`, `MLP()`,
   `BFP.multiset()` and `MLP.multiset()`, and `gp.Prot`/`gp.tau` (in days) in `calc.1Dper()`.
-  With the `Stochastic` signal type the rotation period is what is scanned, so a fixed value
-  is ignored there (with a warning).
+  With the `Stochastic` signal type the oscillation period is what is scanned, so a fixed
+  value is ignored there (with a warning). The internal names `logProt`/`logtauGP` are kept
+  for compatibility with the existing GP code.
 
 The GP likelihood is computed with a dense Cholesky solve (`gp_sho_cov`, `gp_gls`,
 `gp_res`), validated against an independent kernel implementation and a direct solve. The
