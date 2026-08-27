@@ -128,7 +128,7 @@ shinyUI(fluidPage(
                          uiOutput('nar2'),
                          uiOutput('nma2'),
                          uiOutput('Inds2'),
-                         sliderInput("ofac2", "Oversampling factor", min = 0, max = 20, value=1,step=0.2),
+                         sliderInput("ofac2", "Oversampling factor", min = 0.2, max = 20, value=1,step=0.2),
 #                         selectInput("yvar", "Choose observables",
 #                                     choices  = 'RVs',
 #                                     selected = 'RVs',multiple=FALSE),

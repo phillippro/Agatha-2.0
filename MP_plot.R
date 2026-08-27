@@ -3,7 +3,7 @@ library(magicaxis)
 if(scale) zz <- zz.rel
 #th <- median(zz)-alpha*sd(zz)
 #zlim <- c(th,max(zz))
-zlim <- range(zz)
+zlim <- range(zz,na.rm=TRUE)
 xlim <- range(t)
 #zz[zz<th] <- th+1e-3
 size <- 1.5
@@ -69,16 +69,17 @@ cols <- rainbow(length(y),start=alpha/10)#
 power1D <- c()
 for(j in 1:length(yy)){
     if(scale){
-        power1D <- c(power1D,mean(zz[j,]))
+        power1D <- c(power1D,mean(zz[j,],na.rm=TRUE))
     }else{
-        power1D <- c(power1D,max(zz[j,]))
+        power1D <- c(power1D,max(zz[j,],na.rm=TRUE))
     }
 }
 inds <- sort(power1D,decreasing=TRUE,index.return=TRUE)$ix
 sigs <- yy[inds]
 powers <- power1D[inds]
-tmp <- show.peaks(ps=sigs,powers=powers,levels=median(powers))
-sigs <- tmp[,1]
+tmp <- show.peaks(ps=sigs,powers=powers,levels=median(powers,na.rm=TRUE))
+###show.peaks returns a vector for a single peak and a matrix otherwise
+sigs <- if(is.matrix(tmp)) tmp[,1] else tmp[1]
 #sigs <- c(0.85,3.7,8.9)##define sigs manually
 ind.show <- which.min(sigs)
 for(j in 1:2){

@@ -10,10 +10,11 @@ solve.try <- function(lin.mat,vec.rh){
     if(class(white.par)=='try-error')     white.par <- try(solve(lin.mat,vec.rh,tol=tol33),TRUE)
 #    if(class(white.par)=='try-error')     white.par <- try(solve(lin.mat,vec.rh,tol=tol3),TRUE)
     if(class(white.par)=='try-error')     white.par <- try(solve(nearPD(lin.mat)$mat,vec.rh,tol=tol33),TRUE)
-    if(class(white.par)=='try-error'){
-        cat('lin.mat reversion error!\n')
-        cat('lin.mat=',lin.mat,'\n')
-        cat('vec.rh=',vec.rh,'\n')
+    if(class(white.par)[1]=='try-error'){
+###singular normal equations (e.g. a tiny time window with more linear terms
+###than points): return zeros so the caller gets a finite, poor likelihood
+###instead of an error object
+        white.par <- rep(0,length(vec.rh))
     }
     return(white.par)
 }
@@ -2585,21 +2586,21 @@ combine.data <- function(data,Ninds,Nmas,GP=FALSE,gp.par=NULL){
         }else{
             Indices <- NA
         }
-        if(all(Inds==0)){
+        if(is.null(Inds) || all(Inds==0) || all(is.na(Indices))){
             NI <- 0
-            Indices <- NA
+            Indices <- NULL
         }else{
+            Inds <- Inds[Inds>0]
             NI <- length(Inds)
-            if(NI>0){
-                if(NI<2){
-                    Indices <- matrix(Indices[,Inds],ncol=1)
-                }else{
-                    Indices <- Indices[,Inds]
-                }
-            }
+            Indices <- as.matrix(Indices[,Inds,drop=FALSE])
+            for(k in 1:NI) Indices[,k] <- scale(Indices[,k])
         }
-        vars <- global.notation(t,y,dy,Indices,Nmas[j],NI,GP,gp.par)
-        tmp <- sopt(data=tab,Indices=Indices,NI=NI,Nma=Nmas[j],type='noise',pars=vars)
+        if(is.null(gp.par)) gp.par <- rep(NA,3)
+        Nma <- as.integer(Nmas[j])
+        dat <- cbind(t,y,dy)
+        vars <- global.notation(t,y,dy,Nma=Nma,Nar=0,Indices=Indices,GP=GP,gp.par=gp.par)
+        tmp <- sopt(omega=NA,phi=NA,Nma=Nma,Nar=0,Indices=Indices,data=dat,type='noise',par.low=vars$par.low,par.up=vars$par.up,start=vars$start,noise.only=FALSE,GP=GP,gp.par=gp.par,Nrep=1)
+###the residual of each set's own noise model, offset removed, on the common time axis
         val <- cbind(t0,tmp$res,dy)
         idata[[j]] <- val
         out <- rbind(out,val)
@@ -2651,14 +2652,22 @@ MP <- function(t, y, dy,Dt,nbin,fmax=1,ofac=1,fmin=1/1000,tspan=NULL,Indices=NA,
     df <- 1/(Dt*ofac)
     rel.powers <- powers <- c()
     ndata <- rep(NA,nbin)
+    Pgrid <- NULL
+    Nmin <- mp.min.points(per.type,Indices,...)
     withProgress(message = 'Calculating moving periodogram', value = 0, {
         for(j in 0:n){
             incProgress(1/nbin, detail = paste0('window ',j+1,'/',nbin))
             inds <- which(t>=min(t)+j*dt & t<min(t)+j*dt+Dt)
             index <- NULL
-            if(!is.null(Indices) & length(inds)>0){
+            if(!is.null(Indices) && !all(is.na(Indices)) && length(inds)>0){
                 index <- as.matrix(Indices[inds,,drop=FALSE])
             }
+            ndata[j+1] <- length(inds)
+###a window with too few points for the model gets an empty column rather
+###than an error; the plot leaves it blank
+            tmp <- NULL
+            if(length(inds)>=Nmin){
+                tmp <- tryCatch({
             if(per.type=='BGLS'){
                 tmp <- bgls(t=t[inds],y=y[inds],err=dy[inds],fmax=fmax,ofac=ofac,fmin=fmin,tspan=Dt)
             }else if(per.type=='GLS'){
@@ -2670,76 +2679,57 @@ MP <- function(t, y, dy,Dt,nbin,fmax=1,ofac=1,fmin=1/1000,tspan=NULL,Indices=NA,
             }else if(per.type=='BFP'){
                 tmp <- BFP(t=t[inds],y=y[inds],dy=dy[inds],fmax=fmax,ofac=ofac,fmin=fmin,tspan=Dt,Indices=index,...)
             }else if(per.type=='LS'){
+###lsp() already returns P and power on the same grid as the other periodograms
                 tmp <- lsp(times=t[inds],x=y[inds],ofac=ofac,from=fmin,to=fmax,tspan=Dt,alpha=c(0.1,0.01,0.001))
-                ps <- 1/tmp$scanned
-                pps <- tmp$power
-                inds <- sort(ps,index.return=TRUE,decreasing=TRUE)$ix
-                tmp[['power']] <- pps[inds]
-                tmp[['P']] <- ps[inds]
             }
-            index <- sort(tmp$P,index.return=TRUE)$ix
-            relpower <- (tmp$power[index]-mean(tmp$power[index]))/(max(tmp$power[index])-mean(tmp$power[index]))
-            rel.powers <- cbind(rel.powers,relpower)
-            if(per.type=='MLP' | per.type=='BGLS'){
-                pp <- tmp$power[index]-max(tmp$power[index])
-            }else{
-                pp <- tmp$power[index]
+                tmp },error=function(e){ message('moving periodogram: window ',j+1,' skipped (',conditionMessage(e),')'); NULL })
             }
-            powers <- cbind(powers,pp)
-            ndata[j+1] <- length(inds)
+            col <- mp.window.column(tmp,per.type,Pgrid)
+            if(is.null(Pgrid) && !is.null(col$P)) Pgrid <- col$P
+            rel.powers <- cbind(rel.powers,col$rel)
+            powers <- cbind(powers,col$pp)
         }
     })
-    return(list(tmid=tmid,P=tmp$P[index],powers=powers,rel.powers=rel.powers,ndata=ndata))
+    if(is.null(Pgrid)) stop('No moving-time window contains enough data for the chosen periodogram; increase the window or reduce the model.')
+    return(list(tmid=tmid,P=Pgrid,powers=powers,rel.powers=rel.powers,ndata=ndata))
+}
+
+mp.min.points <- function(per.type,Indices,...){
+###smallest number of points a window needs: the linear terms of the model plus a few
+    dots <- list(...)
+    Nma <- if(is.null(dots$Nma)) 0 else as.integer(dots$Nma)
+    Nar <- if(is.null(dots$Nar)) 0 else as.integer(dots$Nar)
+    NI <- if(is.null(Indices) || all(is.na(Indices))) 0 else ncol(as.matrix(Indices))
+    base <- if(per.type %in% c('BFP','MLP')) 4+NI+2*(Nma+Nar) else 3
+    max(5,base+2)
+}
+
+mp.window.column <- function(tmp,per.type,Pgrid){
+###one column of the moving periodogram from a periodogram result (NULL = skipped window)
+    if(is.null(tmp) || is.null(tmp$P) || length(tmp$P)==0){
+        n <- if(is.null(Pgrid)) 0 else length(Pgrid)
+        return(list(P=NULL,pp=rep(NA,n),rel=rep(NA,n)))
+    }
+    index <- sort(tmp$P,index.return=TRUE)$ix
+    P <- tmp$P[index]
+    pw <- tmp$power[index]
+    if(!is.null(Pgrid) && length(P)!=length(Pgrid)){
+###a different grid (should not happen with a fixed window): interpolate onto the first one
+        pw <- approx(P,pw,Pgrid,rule=2)$y
+        P <- Pgrid
+    }
+    rng <- max(pw,na.rm=TRUE)-mean(pw,na.rm=TRUE)
+    rel <- if(is.finite(rng) && rng>0) (pw-mean(pw,na.rm=TRUE))/rng else rep(NA,length(pw))
+    pp <- if(per.type=='MLP' | per.type=='BGLS') pw-max(pw,na.rm=TRUE) else pw
+    list(P=P,pp=pp,rel=rel)
 }
 
 ####MP without progress
 MP.norm <- function(t, y, dy,Dt,nbin,fmax=1,ofac=1,fmin=1/1000,per.type='MLP',Indices=NA,...){
-    n <- nbin-1
-    dt <- (max(t)-min(t)-Dt)/n
-    tstart <- min(t)+(0:n)*dt
-    tend <- min(t)+(0:n)*dt+Dt
-    tmid <- (tstart+tend)/2
-    df <- 1/(Dt*ofac)
-    rel.powers <- powers <- c()
-    ndata <- rep(NA,nbin)
-        for(j in 0:n){
-#            cat(paste0(Dt,'d window'),j+1,'/',nbin,'\n')
-            inds <- which(t>=min(t)+j*dt & t<min(t)+j*dt+Dt)
-            index <- NULL
-            if(!is.null(Indices) & length(inds)>0){
-                index <- as.matrix(Indices[inds,,drop=FALSE])
-            }
-            if(per.type=='BGLS'){
-                tmp <- bgls(t=t[inds],y=y[inds],err=dy[inds],fmax=fmax,ofac=ofac,fmin=fmin,tspan=Dt)
-            }else if(per.type=='GLS'){
-                tmp <- gls(t=t[inds],y=y[inds],err=dy[inds],fmax=fmax,ofac=ofac,fmin=fmin,tspan=Dt)
-            }else if(per.type=='GLST'){
-                tmp <- glst(t=t[inds],y=y[inds],err=dy[inds],fmax=fmax,ofac=ofac,fmin=fmin,tspan=Dt)
-            }else if(per.type=='MLP'){
-                tmp <- MLP(t=t[inds],y=y[inds],dy=dy[inds],fmax=fmax,ofac=ofac,fmin=fmin,tspan=Dt,Indices=index,...)
-            }else if(per.type=='BFP'){
-                tmp <- BFP(t=t[inds],y=y[inds],dy=dy[inds],fmax=fmax,ofac=ofac,fmin=fmin,tspan=Dt,progress=FALSE,...)
-            }else if(per.type=='LS'){
-                tmp <- lsp(times=t[inds],x=y[inds],ofac=ofac,from=fmin,to=fmax,tspan=Dt,alpha=c(0.1,0.01,0.001))
-                ps <- 1/tmp$scanned
-                pps <- tmp$power
-                inds <- sort(ps,index.return=TRUE,decreasing=TRUE)$ix
-                tmp[['power']] <- pps[inds]
-                tmp[['P']] <- ps[inds]
-            }
-            index <- sort(tmp$P,index.return=TRUE)$ix
-#            relpower <- (tmp$power[index]-mean(tmp$power[index]))/(max(tmp$power[index])-mean(tmp$power[index]))
-            relpower <- (tmp$power[index]-min(tmp$power[index]))/length(inds)
-            rel.powers <- cbind(rel.powers,relpower)
-            if(per.type=='MLP' | per.type=='BGLS'){
-                pp <- tmp$power[index]-max(tmp$power[index])
-            }else{
-                pp <- tmp$power[index]
-            }
-            powers <- cbind(powers,pp)
-            ndata[j+1] <- length(inds)
-        }
-    return(list(tmid=tmid,P=tmp$P[index],powers=powers,rel.powers=rel.powers,ndata=ndata))
+###MP() without the Shiny progress bar
+    withProgress <- function(message,value,expr,...) force(expr)
+    incProgress <- function(...) invisible(NULL)
+    MP(t=t,y=y,dy=dy,Dt=Dt,nbin=nbin,fmax=fmax,ofac=ofac,fmin=fmin,Indices=Indices,per.type=per.type,...)
 }
 show.peaks <- function(ps,powers,levels=NULL,Nmax=5){
     if(is.null(levels)) levels <- max(max(powers)-log(150),median(powers))

@@ -1351,10 +1351,16 @@ per2D.data <- function(vars,per.par,data){
         }
     }
     i <- 1
+    Nma <- as.integer(pars[[i]]$Nma)
+    Nar <- as.integer(pars[[i]]$Nar)
+    Inds.sets <- Inds
     if(length(per.target)==1){
-        Nma <- as.integer(pars[[i]]$Nma)
-        Nar <- as.integer(pars[[i]]$Nar)
         Inds <- as.integer(pars[[i]]$Inds)
+    }else{
+###with several data sets the proxies and MA terms are applied per set inside
+###combine.data(); the combined residual series is then analysed without them
+        Inds <- 0
+        Nma <- 0
     }
     Indices <- NULL
     per.type <- pars[[i]]$per.type
@@ -1362,10 +1368,11 @@ per2D.data <- function(vars,per.par,data){
     if(length(per.target)>1){
         instrument <- 'combined'
         subdata <- lapply(1:length(per.target),function(j) data[[per.target[j]]])
-        tmp <- combine.data(data=subdata,Ninds=Inds,Nmas=Nmas)
+        if(!is.list(Inds.sets)) Inds.sets <- rep(list(Inds.sets),length(per.target))
+        tmp <- combine.data(data=subdata,Ninds=Inds.sets,Nmas=Nmas)
         tab <- tmp$cdata
         idata <- tmp$idata
-        colnames(tab) <- colnames(data[[1]])[1:3]
+        colnames(tab) <- colnames(data[[per.target[1]]])[1:3]
     }else{
         instrument <- per.target
         tab <- data[[per.target]]

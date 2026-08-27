@@ -58,6 +58,21 @@ Completed for figures:
    used by the screen, the bundled PDF and per-figure downloads in PDF/PNG/JPG with size and dpi.
 1. Added `tests/test_plots.R`.
 
+Completed for the moving (2D) periodogram, after testing it across six data sets and all
+periodogram types:
+
+1. `LS` read a field `lsp()` does not return (empty powers, plot crash) - fixed.
+1. Windows with too few points for the model are skipped (blank column) instead of aborting;
+   every window's periodogram is wrapped so one failure cannot kill the run; a clear error is
+   raised only if no window has enough data.
+1. Singular normal equations (small window + MA + proxies) no longer leak a `try-error` into
+   arithmetic (`solve.try` returns zeros -> finite poor likelihood).
+1. `combine.data` (two or more data sets in the 2D tab) called `global.notation`/`sopt` with an
+   obsolete argument order - fixed; proxies are scaled per set as in the 1D path.
+1. `MP_plot.R` tolerates NA columns and a single detected peak; the 2D oversampling slider can
+   no longer be 0.
+1. Added `tests/test_moving_periodogram.R`.
+
 Remaining follow-up work:
 
 1. MCMC with the GP noise model (the `mcfit` data wrapper is ARMA-only).
