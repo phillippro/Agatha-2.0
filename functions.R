@@ -1133,22 +1133,31 @@ panel.periodogram <- function(per.list,ypar,i,title,levels=NULL,SigType='circula
         if(length(lv)>0) abline(h=lv,lty=2,col=pub.col$level,lwd=1)
     }
     lines(P,power,lwd=if(pub) 1.6 else 1,col=pub.col$data)
-    k <- which.max(power)
+    kraw <- which.max(power)
+    k <- kraw
     if(!is.null(Pmark) && is.finite(Pmark) && Pmark>0){
         k <- which.min(abs(log(P)-log(Pmark)))
     }
     pmax <- P[k]; wmax <- power[k]
     dyv <- max(power)-ymin
+    alias <- abs(log(P[kraw]/pmax))>0.01
     par(xpd=TRUE)
-    kraw <- which.max(power)
-    if(abs(log(P[kraw]/pmax))>0.01){
-###the raw maximum is an alias of the reported period: mark it lightly
-        points(P[kraw],power[kraw],pch=1,col=pub.col$level)
-        text(P[kraw],power[kraw],labels=paste0(format(P[kraw],digits=3),' (alias)'),pos=3,col=pub.col$level,cex=0.8)
-    }
     lab <- if(SigType=='stochastic') paste0('tau = ',format(pmax,digits=4),' d') else paste0('P = ',format(pmax,digits=4),' d')
-    text(pmax,wmax+0.08*dyv,pos=3,labels=lab,col=pub.col$peak,cex=1.0)
-    try(arrows(pmax,wmax+0.08*dyv,pmax,wmax+0.02*dyv,col=pub.col$peak,length=0.05,lwd=1.5),TRUE)
+    if(!alias){
+###the reported period is the maximum: arrow and label just above the peak
+        text(pmax,wmax+0.08*dyv,pos=3,labels=lab,col=pub.col$peak,cex=1.0)
+        try(arrows(pmax,wmax+0.08*dyv,pmax,wmax+0.02*dyv,col=pub.col$peak,length=0.05,lwd=1.5),TRUE)
+    }else{
+###the reported period is not the maximum (with harmonics the maximum can be
+###the 2P alias): a full-height marker so it is visible whatever its power,
+###the label in the top margin, and the alias named for what it is
+        segments(pmax,ymin,pmax,max(power)+0.05*dyv,col=pub.col$peak,lty=3,lwd=1.5)
+        text(pmax,max(power)+0.06*dyv,pos=3,labels=lab,col=pub.col$peak,cex=1.0)
+        points(P[kraw],power[kraw],pch=1,col=pub.col$level,cex=1.2)
+        ratio <- P[kraw]/pmax
+        alab <- if(abs(ratio-2)<0.1) '2P alias' else if(abs(ratio-0.5)<0.03) 'P/2 alias' else 'alias'
+        text(P[kraw],power[kraw],labels=paste0(alab,' (',format(P[kraw],digits=3),' d)'),pos=4,col=pub.col$level,cex=0.85)
+    }
     par(xpd=FALSE)
     invisible(list(Popt=pmax,power=wmax))
 }
