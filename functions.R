@@ -153,7 +153,11 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
 ###red-noise model: 'ARMA' (per-set AR/MA orders) or 'GP' (shared SHO Gaussian process)
     if(!exists('noise.model')) noise.model <- 'ARMA'
     GP <- noise.model=='GP'
+###gp.par = c(sigmaGP, logProt, logtauGP): NA = free; the rotation period and the
+###coherence time scale can be fixed from the panel (e.g. a photometric Prot)
     gp.par <- rep(NA,3)
+    if(exists('gp.Prot') && length(gp.Prot)==1 && is.finite(gp.Prot) && gp.Prot>0) gp.par[2] <- log(gp.Prot)
+    if(exists('gp.tau') && length(gp.tau)==1 && is.finite(gp.tau) && gp.tau>0) gp.par[3] <- log(gp.tau)
     if(GP){
         Nmas <- rep(0,length(Nmas))
         Nars <- rep(0,length(Nars))
@@ -295,7 +299,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
                     cat('Nma=',Nma,';Nar=',Nar,';model.type=man;Indices=',Indices, ';ofac=',ofac,';fmin=',frange[1],';fmax=',frange[2],';quantify=',quantify, ';renew=',renew,';noise.only=',noise.only,'\n')
                 }
                 if(multi.set){
-                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE,noise.only=noise.only,Nh=Nh,noise.model=noise.model)
+                    rv.ls <- BFP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],progress=FALSE,noise.only=noise.only,Nh=Nh,noise.model=noise.model,gp.par=gp.par)
                 }else{
                     rv.ls <- BFP(t=t,y=y,dy=dy, Nma=Nma,Nar=Nar,model.type='man',Indices=Indices, ofac=ofac,fmin=frange[1],fmax=frange[2],quantify=quantify, renew=renew,Nsamp=Nsamp,noise.only=noise.only,Nh=Nh,GP=GP,gp.par=gp.par)
                 }
@@ -304,7 +308,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
                 name <- 'logBF'
             }else if(per.type=='MLP'){
                 if(multi.set){
-                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],Nh=Nh,noise.model=noise.model)
+                    rv.ls <- MLP.multiset(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmin=frange[1],fmax=frange[2],Nh=Nh,noise.model=noise.model,gp.par=gp.par)
                 }else{
                     rv.ls <- MLP(t=tab[,1]-min(tab[,1]),y=y,dy=dy,Nma=Nma,Nar=Nar,Indices=Indices,ofac=ofac,fmin=frange[1],fmax=frange[2],MLP.type=MLP.type,Nh=Nh,GP=GP,gp.par=gp.par)
                 }

@@ -47,6 +47,9 @@ Completed in the GP implementation:
    overwritten by `mcmc_func.R` in the app anyway.
 1. P/2P disambiguation of multi-harmonic peaks now compares single-sinusoid likelihoods at
    P and P/2 instead of harmonic amplitudes (amplitudes misled on sparse data).
+1. Multi-set BFP fits the GP hyperparameters jointly with the signal per frequency
+   (`gp.fit='joint'`); the fixed-hyperparameter scan remains for MLP / as an option.
+1. GP time scales can be fixed from the panel (`gp.Prot`, `gp.tau`) or left free.
 1. Added `tests/test_gp_periodogram.R`.
 
 Remaining follow-up work:

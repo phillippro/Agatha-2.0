@@ -125,6 +125,15 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
         }
     })
 
+    output$gp.par <- renderUI({
+        if(is.null(input$noise.model) || input$noise.model!='GP') return()
+        tagList(
+            numericInput('gp.Prot','GP rotation period [day] (e.g. from photometry; leave empty to fit it)',value=NA,min=0),
+            numericInput('gp.tau','GP coherence time scale [day] (leave empty to fit it)',value=NA,min=0),
+            helpText('The GP amplitude is always fitted. With the Stochastic signal type the rotation period is scanned and a fixed value is ignored.')
+        )
+    })
+
     output$nar <- renderUI({
     if(is.null(input$per.target) | is.null(input$per.type)) return()
     if(!is.null(input$noise.model) && input$noise.model=='GP') return()
@@ -642,6 +651,8 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
       }
       vals$Nh <- if(is.null(input$Nh)) 1 else as.integer(input$Nh)
       vals$noise.model <- if(is.null(input$noise.model)) 'ARMA' else input$noise.model
+      vals$gp.Prot <- if(is.null(input$gp.Prot)) NA else suppressWarnings(as.numeric(input$gp.Prot))
+      vals$gp.tau <- if(is.null(input$gp.tau)) NA else suppressWarnings(as.numeric(input$gp.tau))
       return(vals)
   })
 

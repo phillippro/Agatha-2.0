@@ -53,8 +53,13 @@ sig <- A*cos(2*pi*tt/P)+B*sin(2*pi*tt/P)
 y <- sig+red+ifelse(sid=='set1',10,-5)+rnorm(length(tt),0,dy)
 expect_true(sd(red)>1.5*sqrt(A^2+B^2)/sqrt(2),'the simulated red noise is not dominant; the test would not be informative')
 
-gp <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=4,fmin=1/120,fmax=1/8,noise.model='GP')
-white <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=4,fmin=1/120,fmax=1/8)
+gp <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=2,fmin=1/120,fmax=1/8,noise.model='GP')
+expect_true(identical(gp$gp$fit,'joint'),'BFP.multiset with GP did not fit the hyperparameters jointly with the signal')
+####the hyperparameters must vary along the scan when fitted jointly
+expect_true(sd(gp$pars[,'logtauGP'])>0,'joint GP fit did not refit the hyperparameters across trial periods')
+gpf <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=2,fmin=1/120,fmax=1/8,noise.model='GP',gp.fit='fixed')
+expect_true(abs(gpf$Popt-P)<0.5,paste('fixed-hyperparameter GP periodogram found',gpf$Popt,'instead of',P))
+white <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=2,fmin=1/120,fmax=1/8)
 expect_true(identical(gp$noise.model,'GP') && all(c('sigmaGP','logProt','logtauGP')%in%names(gp$par.opt)),
             'BFP.multiset did not return a GP fit')
 expect_true(abs(gp$Popt-P)<0.5,paste('GP multi-set periodogram found',gp$Popt,'instead of',P))
@@ -68,7 +73,7 @@ expect_true(sd(gp$res)<0.6*sd(white$res),'the GP fit did not absorb the red nois
 expect_true(abs(gp$gp$logProt-log(60))<log(2.5),paste('recovered GP rotation period',exp(gp$gp$logProt),'far from 60'))
 
 ####Keplerian fit under the same GP covariance, seeded by the harmonics
-gp2 <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=4,fmin=1/120,fmax=1/8,noise.model='GP',Nh=2)
+gp2 <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=2,fmin=1/120,fmax=1/8,noise.model='GP',Nh=2)
 expect_true(abs(gp2$Popt-P)<0.5,paste('GP multi-set periodogram with Nh=2 found',gp2$Popt,'instead of',P))
 kf <- KeplerFit.multiset(gp2)
 expect_true(abs(kf$ParKep$P1-P)<0.5 && kf$ParKep$e1<0.25,
@@ -91,7 +96,7 @@ expect_true(abs(log(st$Popt/60))<log(2.5),paste('stochastic GP periodogram recov
 renew <- TRUE; Nsamp <- 1
 mk <- function(sel) data.frame(Time=tt[sel],RV=y[sel],eRV=dy[sel])
 d2 <- list(set1=mk(sid=='set1'),set2=mk(sid=='set2'))
-pp <- list(ns=c('RV','Window Function'),ofac=4,frange=c(1/120,1/8),per.type='BFP',
+pp <- list(ns=c('RV','Window Function'),ofac=2,frange=c(1/120,1/8),per.type='BFP',
            per.target=c('set1','set2'),sequence=FALSE,Nmas=c(0,0),Nars=c(0,0),
            Inds=list(0,0),Nsig.max=1,per.type.seq='BFP',Niter=0,SigType='circular',Nh=1,noise.model='GP')
 out <- calc.1Dper(Nmax.plots=2,vars='RV',per.par=pp,data=d2,Ncores=1)
@@ -112,5 +117,24 @@ pp1$SigType <- 'kepler'
 out1k <- calc.1Dper(Nmax.plots=2,vars='RV',per.par=pp1,data=d1,Ncores=1)
 expect_true(abs(out1k$par.list$RV[['P1']]-P)<1 && out1k$par.list$RV[['e1']]<0.3,
             paste('single-set GP Keplerian fit gave P=',out1k$par.list$RV[['P1']],'e=',out1k$par.list$RV[['e1']]))
+
+####################################################
+## Fixed time scales (e.g. a photometric rotation period): the fixed value must
+## be used as is, the others still fitted, in both the multi-set and single-set paths
+####################################################
+gpx <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=2,fmin=1/120,fmax=1/8,noise.model='GP',gp.par=c(NA,log(60),NA))
+expect_true(abs(gpx$par.opt[['logProt']]-log(60))<1e-12,'multi-set GP did not hold the rotation period fixed')
+expect_true(abs(gpx$Popt-P)<0.5,paste('multi-set GP with fixed Prot found',gpx$Popt,'instead of',P))
+expect_true(all(abs(gpx$pars[,'logProt']-log(60))<1e-12),'the fixed rotation period drifted along the scan')
+gpxx <- BFP.multiset(t=tt,y=y,dy=dy,set.id=sid,ofac=2,fmin=1/120,fmax=1/8,noise.model='GP',gp.par=c(NA,log(60),log(150)))
+expect_true(abs(gpxx$par.opt[['logtauGP']]-log(150))<1e-12 && abs(gpxx$Popt-P)<0.5,'multi-set GP with both time scales fixed failed')
+ppx <- pp; ppx$SigType <- 'circular'; ppx$Nh <- 1; ppx$gp.Prot <- 60; ppx$gp.tau <- NA
+outx <- calc.1Dper(Nmax.plots=2,vars='RV',per.par=ppx,data=d2,Ncores=1)
+expect_true(abs(outx$par.list$RV[['logProt']]-log(60))<1e-12,'calc.1Dper did not pass the fixed rotation period to the multi-set GP')
+pp1x <- pp1; pp1x$SigType <- 'circular'; pp1x$gp.Prot <- 60; pp1x$gp.tau <- NA
+out1x <- calc.1Dper(Nmax.plots=2,vars='RV',per.par=pp1x,data=d1,Ncores=1)
+expect_true(!('logProt'%in%names(out1x$par.list$RV)) && 'sigmaGP'%in%names(out1x$par.list$RV),
+            'single-set BFP with a fixed rotation period still fitted it (or lost the GP amplitude)')
+expect_true(abs(out1x$par.list$RV[['P1']]-P)<1,paste('single-set GP BFP with fixed Prot found',out1x$par.list$RV[['P1']]))
 
 cat('GP periodogram tests passed\n')

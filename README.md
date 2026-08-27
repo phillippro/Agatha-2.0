@@ -279,14 +279,30 @@ How the GP enters each computation:
   with the signal by `sopt()`, exactly as the ARMA parameters are. MLP: the GP is fitted on
   the signal-free model, its conditional mean is subtracted, and the marginalized periodogram
   is computed on the residual (`MLP.type='sub'`).
-- Several data sets (`multiset_gp_periodogram`): the hyperparameters are fitted once on the
-  signal-free model and held fixed while the harmonics are scanned by generalized least
-  squares under the GP covariance (the GP-whitened periodogram); the Keplerian refit uses the
-  same covariance.
+- Several data sets (`multiset_gp_periodogram`): for BFP the hyperparameters are refitted
+  together with the harmonics (`gp.fit='joint'`), so that the noise and the signal compete at
+  each frequency exactly as in the single-set BFP and in the ARMA case. Because the
+  hyperparameters vary smoothly with frequency, the refit is done on a coarse grid of about
+  5 per cent of the trial frequencies (warm-started along the grid) and interpolated in
+  between, where only the generalized least squares is solved; the ten highest peaks and the
+  reported peak are then refitted exactly. On a 130-point test this takes 29 s at `ofac=2`
+  against 218 s for a refit at every frequency, with identical peak values (lnBF 40.0 at
+  the true period, against 12.4 for the fixed-hyperparameter scan of the same data). Hyperparameters fitted on the signal-free model
+  absorb signal power and suppress the peak, which is why the fixed-hyperparameter
+  (GP-whitened) scan is kept only as an option (`gp.fit='fixed'`) and as the MLP default,
+  where the noise is fixed before marginalizing by construction. The Keplerian refit uses the
+  covariance found at the peak.
 - `Stochastic` signal type with `GP`: no periodic signal; the rotation period of the kernel is
   scanned and `sigma`, `tauGP` are refitted at each trial period against the white-noise
   baseline, so the periodogram shows the evidence for quasi-periodic red noise.
 - Phase plots and residuals have the GP conditional mean removed.
+- When `GP` is selected the panel offers `GP rotation period` and `GP coherence time scale`.
+  Leave a field empty to fit that hyperparameter; enter a value (e.g. a photometric rotation
+  period) to hold it fixed. The amplitude is always fitted. In the API this is
+  `gp.par=c(sigmaGP, logProt, logtauGP)` with `NA` for free, on `BFP()`, `MLP()`,
+  `BFP.multiset()` and `MLP.multiset()`, and `gp.Prot`/`gp.tau` (in days) in `calc.1Dper()`.
+  With the `Stochastic` signal type the rotation period is what is scanned, so a fixed value
+  is ignored there (with a warning).
 
 The GP likelihood is computed with a dense Cholesky solve (`gp_sho_cov`, `gp_gls`,
 `gp_res`), validated against an independent kernel implementation and a direct solve. The

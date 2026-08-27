@@ -1305,12 +1305,32 @@ gp_predict_par <- function(t, dy, par, df, r){
     gp_predict(t,R,sigmaGP,logProt,logtauGP,r)
 }
 
-gp_fit_hyper <- function(t, y, dy, X, logProt.fix=NULL, start=NULL, Nstart=3){
+gp_fix_from_par <- function(gp.par){
+###gp.par = c(sigmaGP, logProt, logtauGP) with NA for free, as used by BFP()
+    fx <- list()
+    if(length(gp.par)>=2 && !is.na(gp.par[2])) fx$logProt <- gp.par[2]
+    if(length(gp.par)>=3 && !is.na(gp.par[3])) fx$logtauGP <- gp.par[3]
+    fx
+}
+
+gp_hyper_from_par <- function(t, dy, v){
+###(log sigma, log Prot, log tauGP) -> hyperparameters and Cholesky factor
+    Q <- exp(v[['logtauGP']])*pi/exp(v[['logProt']])
+    w0 <- 2*pi/exp(v[['logProt']])
+    h <- list(sigmaGP=exp(2*v[['logsig']])/(w0*Q),logProt=v[['logProt']],logtauGP=v[['logtauGP']],
+              sigma=exp(v[['logsig']]),par=v)
+    h$R <- gp_chol(gp_sho_cov(t,h$sigmaGP,h$logProt,h$logtauGP,dy=dy))
+    h
+}
+
+gp_fit_hyper <- function(t, y, dy, X, logProt.fix=NULL, logtauGP.fix=NULL, start=NULL, Nstart=3, maxit=200){
 ###maximum-likelihood SHO hyperparameters with the linear parameters of X
 ###profiled out by GLS. Optimized in (log sigma, log Prot, log tauGP) where
 ###sigma^2 = S0 w0 Q is the GP variance, which is much better conditioned
-###than S0 itself. With logProt.fix the rotation period is held fixed (the
-###stochastic periodogram scans it) and only sigma and tauGP are fitted.
+###than S0 itself. With logProt.fix and/or logtauGP.fix the rotation period
+###(e.g. from photometry) and/or the coherence time scale are held fixed and
+###only the remaining hyperparameters are fitted; the stochastic periodogram
+###uses logProt.fix to scan the rotation period.
     ts <- sort(unique(t))
     dt <- max(min(diff(ts)),1e-3)
     span <- max(t)-min(t)
@@ -1319,9 +1339,10 @@ gp_fit_hyper <- function(t, y, dy, X, logProt.fix=NULL, start=NULL, Nstart=3){
     upper <- c(logsig=log(10*sdy),logProt=log(2*span),logtauGP=log(10*span))
     tovec <- function(v){
         lp <- if(is.null(logProt.fix)) v[['logProt']] else logProt.fix
-        Q <- exp(v[['logtauGP']])*pi/exp(lp)
+        lt <- if(is.null(logtauGP.fix)) v[['logtauGP']] else logtauGP.fix
+        Q <- exp(lt)*pi/exp(lp)
         w0 <- 2*pi/exp(lp)
-        c(sigmaGP=exp(2*v[['logsig']])/(w0*Q),logProt=lp,logtauGP=v[['logtauGP']])
+        c(sigmaGP=exp(2*v[['logsig']])/(w0*Q),logProt=lp,logtauGP=lt)
     }
     obj <- function(v){
         names(v) <- free
@@ -1332,21 +1353,22 @@ gp_fit_hyper <- function(t, y, dy, X, logProt.fix=NULL, start=NULL, Nstart=3){
         ll <- gp_gls(R,X,y)$logL
         if(!is.finite(ll)) 1e10 else -ll
     }
-    free <- if(is.null(logProt.fix)) c('logsig','logProt','logtauGP') else c('logsig','logtauGP')
+    free <- c('logsig',if(is.null(logProt.fix)) 'logProt',if(is.null(logtauGP.fix)) 'logtauGP')
     starts <- list()
     if(!is.null(start)){
         starts[[1]] <- start[free]
     }else{
         lps <- if(is.null(logProt.fix)) log(span/c(50,10,3))[1:Nstart] else rep(logProt.fix,1)
         for(lp in lps){
-            s <- c(logsig=log(max(sdy/2,1e-3*sdy*1.1)),logProt=lp,logtauGP=lp)
+            s <- c(logsig=log(max(sdy/2,1e-3*sdy*1.1)),logProt=lp,
+                   logtauGP=if(is.null(logtauGP.fix)) lp else logtauGP.fix)
             starts[[length(starts)+1]] <- s[free]
         }
     }
     best <- NULL
     for(s in starts){
         s <- pmin(pmax(s,lower[free]+1e-6),upper[free]-1e-6)
-        o <- try(optim(s,obj,method='L-BFGS-B',lower=lower[free],upper=upper[free],control=list(maxit=200)),TRUE)
+        o <- try(optim(s,obj,method='L-BFGS-B',lower=lower[free],upper=upper[free],control=list(maxit=maxit)),TRUE)
         if(class(o)[1]=='try-error') next
         if(is.null(best) || o$value<best$value) best <- o
     }
@@ -1354,6 +1376,8 @@ gp_fit_hyper <- function(t, y, dy, X, logProt.fix=NULL, start=NULL, Nstart=3){
     v <- best$par
     names(v) <- free
     h <- tovec(v)
+###report all three so callers can warm-start or interpolate without caring what was fixed
+    v <- c(logsig=v[['logsig']],logProt=h[['logProt']],logtauGP=h[['logtauGP']])
     K <- gp_sho_cov(t,h[['sigmaGP']],h[['logProt']],h[['logtauGP']],dy=dy)
     R <- gp_chol(K)
     list(sigmaGP=h[['sigmaGP']],logProt=h[['logProt']],logtauGP=h[['logtauGP']],
@@ -1376,14 +1400,26 @@ gp_res <- function(t, r, dy, sj, sigmaGP, logProt, logtauGP){
 
 multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA,
                                     tspan=NULL, sampling='combined', section=1,
-                                    trend=TRUE, Nh=1, noise.only=FALSE){
+                                    trend=TRUE, Nh=1, noise.only=FALSE, gp.fit='joint',
+                                    coarse.frac=0.05, Npeak.refit=10, gp.fix=list()){
+###gp.fix: list with logProt and/or logtauGP to hold fixed (e.g. a photometric
+###rotation period); anything not given is a free hyperparameter
 ###Multi-set periodogram with a shared SHO Gaussian process for the red noise
 ###(the star is common to all data sets) plus one offset per data set and a
-###shared trend. Signal mode: the hyperparameters are fitted once on the
-###signal-free model and held fixed while the harmonics are scanned by GLS,
-###the standard GP-whitened periodogram. Stochastic mode (noise.only): no
-###signal; the rotation period of the kernel is scanned instead and sigma and
-###tauGP are refitted at each trial period, against the white-noise baseline.
+###shared trend.
+###Signal mode, gp.fit='joint' (BFP): the hyperparameters are refitted together
+###with the harmonics, as the single-set BFP does with sopt() and as it does
+###for ARMA, so the noise and the signal compete at each frequency. Because
+###they vary smoothly with frequency, the refit is done on a coarse grid of
+###coarse.frac of the trial frequencies (warm-started along the grid) and
+###interpolated in between, where only the GLS is solved; the Npeak.refit
+###highest peaks and the reported peak are then refitted exactly.
+###Signal mode, gp.fit='fixed' (MLP): the hyperparameters are fitted once on
+###the signal-free model and held fixed while the harmonics are scanned by
+###GLS (the GP-whitened periodogram), matching MLP.type='sub'.
+###Stochastic mode (noise.only): no signal; the rotation period of the kernel
+###is scanned and sigma, tauGP are refitted at each trial period, against the
+###white-noise baseline.
     unit <- 1
     t <- (t-min(t))/unit
     set.id <- factor(set.id)
@@ -1397,17 +1433,62 @@ multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA
     X0 <- multiset_design(t=t,set.id=set.id,omega=NULL,trend=trend,lag.terms=NULL)
     white <- multiset_wls(t=t,y=y,dy=dy,set.id=set.id,trend=trend)
     if(!noise.only){
-        hyp <- gp_fit_hyper(t,y,dy,X0)
-        if(is.null(hyp) || is.null(hyp$R)) stop('GP hyperparameter fit failed for the multi-set model')
-        R <- hyp$R
+        fitH <- function(X,start=NULL,Nstart=3) gp_fit_hyper(t,y,dy,X,logProt.fix=gp.fix$logProt,logtauGP.fix=gp.fix$logtauGP,start=start,Nstart=Nstart)
+        hyp0 <- fitH(X0)
+        if(is.null(hyp0) || is.null(hyp0$R)) stop('GP hyperparameter fit failed for the multi-set model')
+        R <- hyp0$R
         base <- gp_gls(R,X0,y)
-        fit.at <- function(om,nh=Nh) gp_gls(R,cbind(harmonic_columns(t,om,nh),X0),y)
+        joint <- gp.fit=='joint'
+        start <- hyp0$par
+        fit.at <- function(om,nh=Nh,warm=start){
+            X <- cbind(harmonic_columns(t,om,nh),X0)
+            if(!joint) return(c(gp_gls(R,X,y),list(hyp=hyp0)))
+            h <- fitH(X,start=warm,Nstart=1)
+            if(is.null(h) || is.null(h$R)) h <- hyp0
+            c(gp_gls(h$R,X,y),list(hyp=h))
+        }
         logLs <- rep(NA,length(f))
         opt.pars <- c()
-        for(kk in 1:length(f)){
-            fit <- fit.at(2*pi*f[kk])
-            logLs[kk] <- fit$logL
-            opt.pars <- rbind(opt.pars,fit$coef)
+        store <- function(kk,fit){
+            logLs[kk] <<- fit$logL
+            opt.pars[kk,] <<- c(fit$coef,sigmaGP=fit$hyp$sigmaGP,logProt=fit$hyp$logProt,logtauGP=fit$hyp$logtauGP)
+        }
+        opt.pars <- matrix(NA,nrow=length(f),ncol=2*Nh+ncol(X0)+3)
+        colnames(opt.pars) <- c(harmonic_names(Nh),colnames(X0),'sigmaGP','logProt','logtauGP')
+        if(joint){
+###coarse grid of joint refits, then interpolated hyperparameters elsewhere
+            Nc <- min(length(f),max(50,ceiling(coarse.frac*length(f))))
+            ic <- unique(round(seq(1,length(f),length.out=Nc)))
+            hp <- matrix(NA,nrow=length(ic),ncol=3)
+            for(j in seq_along(ic)){
+                fit <- fit.at(2*pi*f[ic[j]],warm=start)
+                start <- fit$hyp$par
+                hp[j,] <- start[c('logsig','logProt','logtauGP')]
+                store(ic[j],fit)
+            }
+            lf <- log(f)
+            for(kk in setdiff(1:length(f),ic)){
+                v <- c(logsig=approx(lf[ic],hp[,1],lf[kk],rule=2)$y,logProt=approx(lf[ic],hp[,2],lf[kk],rule=2)$y,
+                       logtauGP=approx(lf[ic],hp[,3],lf[kk],rule=2)$y)
+                h <- gp_hyper_from_par(t,dy,v)
+                if(is.null(h$R)) h <- hyp0
+                X <- cbind(harmonic_columns(t,2*pi*f[kk],Nh),X0)
+                store(kk,c(gp_gls(h$R,X,y),list(hyp=h)))
+            }
+###exact joint refits at the highest peaks
+            top <- order(logLs,decreasing=TRUE)
+            done <- c()
+            for(kk in top){
+                if(length(done)>=Npeak.refit) break
+                if(any(abs(kk-done)<3)) next
+                v <- opt.pars[kk,c('sigmaGP','logProt','logtauGP')]
+                warm <- c(logsig=log(sqrt(v[['sigmaGP']]*2*pi/exp(v[['logProt']])*exp(v[['logtauGP']])*pi/exp(v[['logProt']]))),
+                          logProt=v[['logProt']],logtauGP=v[['logtauGP']])
+                store(kk,fit.at(2*pi*f[kk],warm=warm))
+                done <- c(done,kk)
+            }
+        }else{
+            for(kk in 1:length(f)) store(kk,fit.at(2*pi*f[kk]))
         }
         Nextra <- 2*Nh
         logBF <- logLs-base$logL-Nextra/2*log(Ndata)
@@ -1417,7 +1498,9 @@ multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA
             P1 <- harmonic_period_check(Popt,function(p) fit.at(2*pi/p,nh=1)$logL)
             Popt <- P1
         }
-        fit <- fit.at(2*pi/Popt)
+        fit <- fit.at(2*pi/Popt,warm=hyp0$par)
+        hyp <- fit$hyp
+        R <- hyp$R
         opt.par <- c(fit$coef,sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP)
         opt.par.top <- opt.pars[inds[1:min(10,length(inds))],,drop=FALSE]
         ysig <- harmonic_signal(fit$coef,2*pi/Popt,t)
@@ -1427,15 +1510,16 @@ multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA
         LogLike0 <- base$logL
         df <- list(data=data,set.id=set.id,multi_set=TRUE,Nma=0,Nar=0,NI=0,type='period',GP=TRUE,
                    sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP)
-        gp <- list(sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP,sigma=hyp$sigma)
+        gp <- list(sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP,sigma=hyp$sigma,fit=gp.fit)
         pars <- opt.pars
     }else{
 ###stochastic: scan the rotation period of the kernel
         logLs <- rep(NA,length(f))
         opt.pars <- c()
+        if(!is.null(gp.fix$logProt)) warning('The stochastic GP periodogram scans the rotation period; the fixed value is ignored here.')
         start <- NULL
         for(kk in 1:length(f)){
-            hyp <- gp_fit_hyper(t,y,dy,X0,logProt.fix=log(P[kk]),start=start,Nstart=1)
+            hyp <- gp_fit_hyper(t,y,dy,X0,logProt.fix=log(P[kk]),logtauGP.fix=gp.fix$logtauGP,start=start,Nstart=1)
             if(is.null(hyp)){ logLs[kk] <- NA; opt.pars <- rbind(opt.pars,rep(NA,ncol(X0)+3)); next }
             start <- hyp$par
             logLs[kk] <- hyp$logL
@@ -1449,7 +1533,7 @@ multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA
         logBF[is.na(logBF)] <- -Inf
         inds <- sort(logBF,decreasing=TRUE,index.return=TRUE)$ix
         Popt <- P[inds[1]]
-        hyp <- gp_fit_hyper(t,y,dy,X0,logProt.fix=log(Popt),Nstart=1)
+        hyp <- gp_fit_hyper(t,y,dy,X0,logProt.fix=log(Popt),logtauGP.fix=gp.fix$logtauGP,Nstart=1)
         R <- hyp$R
         fit <- gp_gls(R,X0,y)
         opt.par <- c(fit$coef,sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP)
@@ -1477,11 +1561,11 @@ multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA
 
 BFP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NA,
                          tspan=NULL, sampling='combined', section=1, progress=FALSE,
-                         noise.only=FALSE, Nh=1, noise.model='ARMA'){
+                         noise.only=FALSE, Nh=1, noise.model='ARMA', gp.fit='joint', gp.par=rep(NA,3)){
     if(noise.model=='GP'){
         return(multiset_gp_periodogram(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmax=fmax,fmin=fmin,
                                        tspan=tspan,sampling=sampling,section=section,trend=TRUE,
-                                       Nh=Nh,noise.only=noise.only))
+                                       Nh=Nh,noise.only=noise.only,gp.fit=gp.fit,gp.fix=gp_fix_from_par(gp.par)))
     }
     if(noise.only & !any(as.integer(Nma)>0) & !any(as.integer(Nar)>0)){
         warning('A purely stochastic multi-set fit needs at least one AR or MA component; fitting the periodic model instead.')
@@ -1497,13 +1581,15 @@ BFP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin
 }
 
 MLP.multiset <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NULL, fmin=NULL,
-                         tspan=NULL, sampling='combined', section=1, Nh=1, noise.model='ARMA'){
+                         tspan=NULL, sampling='combined', section=1, Nh=1, noise.model='ARMA', gp.par=rep(NA,3)){
     if(is.null(fmin)){
         fmin <- NA
     }
     if(noise.model=='GP'){
+###the noise is fixed before marginalizing, as in MLP.type='sub'
         out <- multiset_gp_periodogram(t=t,y=y,dy=dy,set.id=set.id,ofac=ofac,fmax=fmax,fmin=fmin,
-                                       tspan=tspan,sampling=sampling,section=section,trend=TRUE,Nh=Nh)
+                                       tspan=tspan,sampling=sampling,section=section,trend=TRUE,Nh=Nh,gp.fit='fixed',
+                                       gp.fix=gp_fix_from_par(gp.par))
     }else{
         out <- multiset_periodogram(t=t,y=y,dy=dy,set.id=set.id,Nma=Nma,Nar=Nar,ofac=ofac,fmax=fmax,fmin=fmin,
                                     tspan=tspan,sampling=sampling,section=section,trend=TRUE,Nh=Nh)
