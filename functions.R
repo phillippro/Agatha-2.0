@@ -134,7 +134,7 @@ addpar <- function(par.old,par.new,nsig){
     return(par)
 }
 
-calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
+calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=8,basis='natural'){
     var <- names(per.par)
     for(k in 1:length(var)){
         assign(var[k],per.par[[var[k]]])
@@ -585,7 +585,7 @@ par.m2a <- function(par.old){
 }
 
 #mcfit <- function(startvalue,Niter,Ncores=1){
-mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSig=NULL,Pconv=FALSE,Ncores=4,
+mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSig=NULL,Pconv=FALSE,Ncores=8,
                   mcmc.method='PT',Ntem=NULL,tem.min=NULL,swap.interval=10,mcmc.verbose=FALSE){
 ###get initial parameters from agatha
 #    break()
@@ -845,7 +845,7 @@ msmc.stat <- function(x){
       mean=mean(x,na.rm=TRUE),sd=sd(x),x1per=q[4],x99per=q[5],x10per=q[6],x90per=q[7])
 }
 
-mcfit.multiset <- function(per, data, set.id, tsim, Niter=1e3, SigType='kepler', Ncores=4,
+mcfit.multiset <- function(per, data, set.id, tsim, Niter=1e3, SigType='kepler', Ncores=8,
                            Ntem=NULL, tem.min=NULL, swap.interval=10, mcmc.verbose=FALSE){
 ###PT-MCMC refinement of a multi-set fit: a shared signal (Keplerian or
 ###circular), one offset per data set, a shared linear trend, and one jitter
@@ -993,7 +993,7 @@ mcfit.multiset <- function(per, data, set.id, tsim, Niter=1e3, SigType='kepler',
          res=as.numeric(res),ysim0=as.numeric(ysim0))
 }
 
-sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE, Niter=1e3, Ncores=4,
+sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE, Niter=1e3, Ncores=8,
                             Ntem=NULL, tem.min=NULL, swap.interval=10, mcmc.verbose=FALSE){
 ###Turn a multi-data-set periodogram into a fitted model, its residual and its
 ###phase-folded prediction. SigType selects a shared circular signal, a shared
@@ -1080,7 +1080,7 @@ sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE, N
                 par.stat=NULL,popt=popt,mc=c()))
 }
 
-sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4,Niter=1e3,Pconv=FALSE,res.type='sig',
+sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=8,Niter=1e3,Pconv=FALSE,res.type='sig',
                    mcmc.method='PT',Ntem=NULL,tem.min=NULL,swap.interval=10,mcmc.verbose=FALSE){
 ###This function is to modify the output of various periodograms to give residual, model prediction, and optimal parameters as well as posterior/likelihood samples
     ##x is a list
