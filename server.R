@@ -935,12 +935,31 @@ output$color <- renderUI({
 
 ###get BFP power spectrum
     data1D <- eventReactive(input$plot1D,{
-        tryCatch({
+        stack <- NULL
+        tryCatch(withCallingHandlers({
 ###use calc.1Dper() from functions.R to calculate periodogram
             calc.1Dper(Nmax.plots, periodogram.var(),per.par(),data())
         },error=function(e){
-###a silent failure looks like a dead button; tell the user what went wrong
-            showNotification(paste('Periodogram calculation failed:',conditionMessage(e)),type='error',duration=NULL)
+            stack <<- sys.calls()
+        }),error=function(e){
+###a silent failure looks like a dead button: tell the user what went wrong and
+###write a full diagnostic dump so the failure can be reproduced exactly
+            dump.file <- file.path(getwd(),'agatha_last_error.txt')
+            try({
+                con <- file(dump.file,'w')
+                writeLines(c(paste('time:',format(Sys.time())),
+                             paste('git:',tryCatch(system('git rev-parse --short HEAD',intern=TRUE),error=function(x) 'unknown')),
+                             paste('error:',conditionMessage(e)),
+                             '--- call stack ---',
+                             if(is.null(stack)) '(unavailable)' else unlist(lapply(stack,function(cl) paste(deparse(cl)[1]))),
+                             '--- observables ---',
+                             paste(deparse(periodogram.var()),collapse='\n'),
+                             '--- settings (per.par) ---',
+                             paste(deparse(per.par()),collapse='\n')),con)
+                close(con)
+            },silent=TRUE)
+            showNotification(paste('Periodogram calculation failed:',conditionMessage(e),
+                                   '- diagnostics written to',dump.file),type='error',duration=NULL)
             NULL
         })
     })
