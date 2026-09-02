@@ -145,6 +145,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=8,basis='natural'){
         mcf <- FALSE
     }
     if(Ncores>0) {registerDoMC(Ncores)} else {registerDoMC()}
+    if(!exists('progress')) progress <- FALSE
     Nmas <- unlist(Nmas)
     Nars <- unlist(Nars)
 ###number of harmonics of the signal in BFP/MLP; 2 or more fits eccentric orbits
@@ -394,7 +395,10 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=8,basis='natural'){
 	}else{
 	     Pconv <- TRUE
 	}
-        fit <- sigfit(per=rv.ls,data=tab,SigType=SigType,basis=basis,Ncores=Ncores,mcf=mcf,Niter=Niter,Pconv=Pconv)
+###the window function is not a signal to refine: no Keplerian, no MCMC
+        mcf1 <- mcf && ypar!='Window Function'
+        SigType1 <- if(ypar=='Window Function') 'circular' else SigType
+        fit <- sigfit(per=rv.ls,data=tab,SigType=SigType1,basis=basis,Ncores=Ncores,mcf=mcf1,Niter=Niter,Pconv=Pconv)
 ###update the output from periodogram
         rv.ls <- fit$per
 
@@ -421,7 +425,11 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=8,basis='natural'){
 
 ###use mcmc to update the combined model and output
         mc <- list()
-        if(mcf){
+###with several data sets the sequential signals are each refined by their own
+###multi-set MCMC, but there is no joint re-fit of all signals, so the combined
+###model is assembled from the per-signal fits in the else branch below
+        mcf2 <- mcf1 & !(multi.set & Nsig.max>1)
+        if(mcf2){
             if(Nsig.max>1 & !multi.set){
                 fit <- mcfit(rv.ls,data=tab[,1:3],tsim=fit$tsim0,Niter=Niter,SigType=SigType,basis=basis,ParSig=par.data,Pconv=TRUE,Ncores=Ncores)
             }
@@ -441,6 +449,10 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=8,basis='natural'){
             sim.data <- cbind(sim.data,qq)
         }else{
             res <- fit$res
+            if(multi.set & Nsig.max>1 & exists('tmp') && !is.null(tmp$res)){
+###the residual after the last sequentially found and refined signal
+                res <- as.numeric(tmp$res)
+            }
             if(Nsig.max>1){
                 ysig0 <- rowSums(phase.data[,paste0('ysig_sig',1:Nsig.max)])
                 ysim <- rowSums(sim.data[,paste0('ysim0_sig',1:Nsig.max)])
@@ -734,12 +746,13 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
 
 #    mcmc  <- list()
 #    mcmc[[1]] <- tmp$out
-    ind <- which(sapply(1:length(mcmc),function(k) is.null(dim(mcmc[[k]]))))
-    if(length(ind)>0) mcmc <- mcmc[-ind]
-    mc <- c()
-    for(j in 1:length(mcmc)){
-        mc <- rbind(mc,mcmc[[j]])
+    bad <- sapply(mcmc,function(m) is.null(dim(m)))
+    if(all(bad)){
+        msg <- tryCatch(conditionMessage(mcmc[[1]]),error=function(e) 'unknown error')
+        stop('all MCMC chains failed: ',msg)
     }
+    mcmc <- mcmc[!bad]
+    mc <- do.call(rbind,mcmc)
 
 ####analyze the MCMC results
     ll <- mc[,'loglike']

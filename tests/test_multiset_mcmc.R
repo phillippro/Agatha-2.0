@@ -76,4 +76,18 @@ expect_true(all(c('P1','K1','e1')%in%colnames(psg)) && !any(grepl('^sj_',colname
             'multi-set GP MCMC should have no per-set jitters (the GP covariance is fixed)')
 expect_true(abs(psg['mode','P1']-P)<0.5,paste('multi-set GP MCMC gave P=',psg['mode','P1']))
 
+####################################################
+## Sequential signals with several data sets and MCMC: each signal is refined
+## by its own multi-set MCMC and the combined model is assembled from the
+## per-signal fits (this exact combination used to die on colnames(NULL))
+####################################################
+pps <- pp
+pps$sequence <- TRUE; pps$Nsig.max <- 2; pps$per.type.seq <- 'BFP'; pps$Niter <- 1000
+outs <- calc.1Dper(Nmax.plots=50,vars='RV',per.par=pps,data=d2,Ncores=1)
+phs <- outs$phase.list$RV
+expect_true(all(c('ysig_sig1','ysig_sig2','y_all','res_all')%in%colnames(phs)),
+            'sequential multi-set MCMC did not return the per-signal and combined columns')
+expect_true(all(is.finite(phs[,'res_all'])),'sequential multi-set MCMC produced non-finite residuals')
+expect_true(ncol(outs$per.list$RV)>=3,'the second signal periodogram is missing')
+
 cat('multi-set MCMC tests passed\n')

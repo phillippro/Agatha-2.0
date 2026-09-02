@@ -85,6 +85,14 @@ Completed for multi-set MCMC:
 
 Completed for app robustness:
 
+1. Sequential signals + several data sets + MCMC crashed with "attempt to set 'colnames' on
+   an object with less than two dimensions": the combining block read `fit$ysim.sig`, which
+   only the single-set joint MCMC re-fit provides. Multi-set sequential fits now assemble the
+   combined model from the per-signal fits, use the last signal's residual, and are covered by
+   a regression test. Also: no MCMC/Keplerian fitting for the Window Function pseudo-observable,
+   robust chain filtering in mcfit (a failed chain no longer corrupts the sample matrix), and
+   `progress` defaults for headless sequential runs.
+
 1. `mcfit.multiset` computed its parameter table via `data.distr`, which the app's local
    sourcing of `functions.R` shadows with a same-named plotting helper (headless scripts source
    both files globally and never see it). The statistics are now computed by the
