@@ -85,6 +85,11 @@ Completed for multi-set MCMC:
 
 Completed for app robustness:
 
+1. `mcfit.multiset` computed its parameter table via `data.distr`, which the app's local
+   sourcing of `functions.R` shadows with a same-named plotting helper (headless scripts source
+   both files globally and never see it). The statistics are now computed by the
+   self-contained `msmc.stat()`; reproduced and verified under the app's exact sourcing.
+
 1. A hidden or not-yet-rendered control (e.g. the AR/MA selectors hidden by the GP choice)
    left NULL inputs that silently broke the Calculate buttons; `per.par`/`per.par2` now fall
    back to defaults, and both calculate buttons show an error notification instead of doing

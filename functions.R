@@ -828,6 +828,17 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
     list(mc=mc,llmax=llmax,lpmax=lpmax,ParSig=ParSig,out=out,par.stat=par.stat,yma=yma,yar=yar,yred=yred,ysig=ysig,ysig0=as.numeric(ysig0),ysim.red=ysim.red,ysim.sig=ysim.sig,ytrend=ytrend,yproxy=yproxy,res=res,res.sig=res.sig,popt=popt,tsim0=tsim)#ysim.all=ysim.all
 }
 
+msmc.stat <- function(x){
+###summary statistics of one MCMC parameter, self-contained so that the result
+###does not depend on which data.distr() happens to be visible (functions.R has
+###a plotting helper of that name that shadows the mcmc_func.R version when the
+###app sources functions.R locally)
+    q <- as.numeric(quantile(x,c(0.1587,0.8413,0.5,0.01,0.99,0.1,0.9),na.rm=TRUE))
+    mode <- tryCatch({ d <- density(x,na.rm=TRUE); d$x[which.max(d$y)] },error=function(e) q[3])
+    c(xminus.1sig=q[1],xplus.1sig=q[2],mode=as.numeric(mode),med=q[3],
+      mean=mean(x,na.rm=TRUE),sd=sd(x),x1per=q[4],x99per=q[5],x10per=q[6],x90per=q[7])
+}
+
 mcfit.multiset <- function(per, data, set.id, tsim, Niter=1e3, SigType='kepler', Ncores=4,
                            Ntem=NULL, tem.min=NULL, swap.interval=10, mcmc.verbose=FALSE){
 ###PT-MCMC refinement of a multi-set fit: a shared signal (Keplerian or
@@ -950,8 +961,7 @@ mcfit.multiset <- function(per, data, set.id, tsim, Niter=1e3, SigType='kepler',
     pb <- ParSig
     pb[['P1']] <- log(pb[['P1']])
     names(pb)[names(pb)=='P1'] <- 'logP1'
-    ll <- mc[,'loglike']
-    par.stat <- sapply(1:Npar,function(i) data.distr(mc[,i],ll,plotf=FALSE))
+    par.stat <- sapply(1:Npar,function(i) msmc.stat(mc[,i]))
     colnames(par.stat) <- colnames(mc)[1:Npar]
     popt <- as.numeric(ParSig[['P1']])
     ysig0 <- signal.at(pb,t)
