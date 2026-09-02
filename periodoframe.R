@@ -1,4 +1,9 @@
 library(minpack.lm)
+###progress-bar fallbacks: inside the Shiny app the real withProgress and
+###incProgress are already defined when this file is sourced; in scripts and
+###tests these no-op versions take their place
+if(!exists('withProgress')) withProgress <- function(message,value,expr,...) force(expr)
+if(!exists('incProgress')) incProgress <- function(...) invisible(NULL)
 #library(lomb)
 tol11 <- 1e-15
 tol22 <- 1e-20
@@ -1185,13 +1190,17 @@ multiset_periodogram <- function(t, y, dy, set.id, Nma=0, Nar=0, ofac=1, fmax=NU
         }
         fit
     }
-    for(kk in 1:length(omegas)){
-        fit <- fit.at(omegas[kk])
-        logLs[kk] <- fit$logL
-        opt.pars <- rbind(opt.pars,fit$coef)
-        yfits[,kk] <- fit$yfit
-        residuals[,kk] <- fit$res
-    }
+    withProgress(message='Calculating multi-set periodogram', value=0, {
+        step <- max(1,floor(length(omegas)/50))
+        for(kk in 1:length(omegas)){
+            if(kk%%step==0) incProgress(step/length(omegas),detail=paste0(round(100*kk/length(omegas)),'%'))
+            fit <- fit.at(omegas[kk])
+            logLs[kk] <- fit$logL
+            opt.pars <- rbind(opt.pars,fit$coef)
+            yfits[,kk] <- fit$yfit
+            residuals[,kk] <- fit$res
+        }
+    })
     Ndata <- length(t)
 ###two amplitudes per fitted harmonic
     Nextra <- 2*Nh
@@ -1461,12 +1470,15 @@ multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA
             Nc <- min(length(f),max(50,ceiling(coarse.frac*length(f))))
             ic <- unique(round(seq(1,length(f),length.out=Nc)))
             hp <- matrix(NA,nrow=length(ic),ncol=3)
+            withProgress(message='Fitting GP hyperparameters along the scan', value=0, {
             for(j in seq_along(ic)){
+                incProgress(1/length(ic),detail=paste0(round(100*j/length(ic)),'%'))
                 fit <- fit.at(2*pi*f[ic[j]],warm=start)
                 start <- fit$hyp$par
                 hp[j,] <- start[c('logsig','logProt','logtauGP')]
                 store(ic[j],fit)
             }
+            })
             lf <- log(f)
             for(kk in setdiff(1:length(f),ic)){
                 v <- c(logsig=approx(lf[ic],hp[,1],lf[kk],rule=2)$y,logProt=approx(lf[ic],hp[,2],lf[kk],rule=2)$y,
@@ -1519,7 +1531,9 @@ multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA
         opt.pars <- c()
         if(!is.null(gp.fix$logProt)) warning('The stochastic GP periodogram scans the rotation period; the fixed value is ignored here.')
         start <- NULL
+        withProgress(message='Calculating stochastic GP periodogram', value=0, {
         for(kk in 1:length(f)){
+            if(kk%%25==0) incProgress(25/length(f),detail=paste0(round(100*kk/length(f)),'%'))
             hyp <- gp_fit_hyper(t,y,dy,X0,logProt.fix=log(P[kk]),logtauGP.fix=gp.fix$logtauGP,start=start,Nstart=1)
             if(is.null(hyp)){ logLs[kk] <- NA; opt.pars <- rbind(opt.pars,rep(NA,ncol(X0)+3)); next }
             start <- hyp$par
@@ -1527,6 +1541,7 @@ multiset_gp_periodogram <- function(t, y, dy, set.id, ofac=1, fmax=NULL, fmin=NA
             cf <- gp_gls(hyp$R,X0,y)$coef
             opt.pars <- rbind(opt.pars,c(cf,sigmaGP=hyp$sigmaGP,logProt=hyp$logProt,logtauGP=hyp$logtauGP))
         }
+        })
 ###sigma and tauGP are the extra parameters; the scanned period plays the
 ###role of the signal period in the ARMA stochastic periodogram
         Nextra <- 2

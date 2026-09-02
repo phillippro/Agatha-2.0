@@ -83,6 +83,16 @@ Completed for multi-set MCMC:
 1. Added `tests/test_multiset_mcmc.R` (two sets Keplerian, five sets circular with a 3-point
    set, GP-whitened MCMC).
 
+Completed for app robustness:
+
+1. A hidden or not-yet-rendered control (e.g. the AR/MA selectors hidden by the GP choice)
+   left NULL inputs that silently broke the Calculate buttons; `per.par`/`per.par2` now fall
+   back to defaults, and both calculate buttons show an error notification instead of doing
+   nothing.
+1. The multi-set periodogram and GP scans show progress bars.
+1. `withProgress`/`incProgress` have no-op fallbacks in `periodoframe.R`, so scripts and tests
+   no longer need shims.
+
 Remaining follow-up work:
 
 

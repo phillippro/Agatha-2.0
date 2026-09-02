@@ -634,19 +634,26 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
     })
 
   per.par <- reactive({
-      vals <- list(ns=ns(),ofac=input$ofac,frange=1/prange()[2:1],per.type=input$per.type,per.target=input$per.target,SigType=input$signal.type,files=input$files,SigType=input$signal.type,sequence=input$sequence)
+###inputs that a hidden or not-yet-rendered control leaves NULL fall back to a
+###default rather than silently breaking the calculation (e.g. the AR/MA
+###selectors are hidden when the GP noise model is chosen)
+      iget <- function(name,default){
+          v <- input[[name]]
+          if(is.null(v) || length(v)==0) default else v
+      }
+      vals <- list(ns=ns(),ofac=input$ofac,frange=1/prange()[2:1],per.type=input$per.type,per.target=input$per.target,SigType=input$signal.type,files=input$files,SigType=input$signal.type,sequence=isTRUE(input$sequence))
       if(any(input$per.type=='MLP' | input$per.type=='BFP')){
           Nars <- Nmas <- c()#consider multiple orders
           Inds <- list()
           for(i in 1:Ntarget()){
-              inds <- as.integer(input[[paste0('Inds',i)]])
+              inds <- as.integer(iget(paste0('Inds',i),0))
               if(all(inds==0)){
                   Inds <- c(Inds,list(inds))
               }else{
                   Inds <- c(Inds,list(inds[inds!=0]))
               }
-              Nmas <- c(Nmas,as.integer(input[[paste0('Nma',i)]]))
-              Nars <- c(Nars,as.integer(input[[paste0('Nar',i)]]))
+              Nmas <- c(Nmas,as.integer(iget(paste0('Nma',i),0)))
+              Nars <- c(Nars,as.integer(iget(paste0('Nar',i),0)))
           }
 #          vals <- c(vals,Nmas=list(Nmas),Inds=list(Inds))
           vals <- c(vals,Nmas=list(Nmas),Nars=list(Nars),Inds=list(Inds))
@@ -660,15 +667,15 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
           vals$Nsig.max <- 1
 	  vals$per.type.seq <- vals$per.type
       }else{
-	  vals$Nsig.max <- as.integer(input$Nsig.max)
-	  vals$per.type.seq <- input$per.type.seq
+	  vals$Nsig.max <- as.integer(iget('Nsig.max',1))
+	  vals$per.type.seq <- iget('per.type.seq',vals$per.type[1])
       }
       if(any(input$per.type=='BFP')){
-          vals$Niter <- as.numeric(input$Niter)
+          vals$Niter <- as.numeric(iget('Niter',0))
       }else{
           vals$Niter <- 0
       }
-      vals$Nh <- if(is.null(input$Nh)) 1 else as.integer(input$Nh)
+      vals$Nh <- as.integer(iget('Nh',1))
       vals$noise.model <- if(is.null(input$noise.model)) 'ARMA' else input$noise.model
       vals$gp.Prot <- if(is.null(input$gp.Prot)) NA else suppressWarnings(as.numeric(input$gp.Prot))
       vals$gp.tau <- if(is.null(input$gp.tau)) NA else suppressWarnings(as.numeric(input$gp.tau))
@@ -681,15 +688,19 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
           Nmas <- c()
           Nars <- c()
           Inds <- list()
+          iget2 <- function(name,default){
+              v <- input[[name]]
+              if(is.null(v) || length(v)==0) default else v
+          }
           for(i in 1:Ntarget2()){
-              inds <- as.integer(input[[paste0('Inds2.',i)]])
+              inds <- as.integer(iget2(paste0('Inds2.',i),0))
               if(all(inds==0)){
                   Inds <- c(Inds,list(inds))
               }else{
                   Inds <- c(Inds,list(inds[inds!=0]))
               }
-              Nmas <- c(Nmas,as.integer(input[[paste0('Nma2.',i)]]))
-              Nars <- c(Nars,as.integer(input[[paste0('Nar2.',i)]]))
+              Nmas <- c(Nmas,as.integer(iget2(paste0('Nma2.',i),0)))
+              Nars <- c(Nars,as.integer(iget2(paste0('Nar2.',i),0)))
           }
           vals <- c(vals,Nmas=list(Nmas),Nars=list(Nars),Inds=list(Inds))
       }else{
@@ -924,8 +935,14 @@ output$color <- renderUI({
 
 ###get BFP power spectrum
     data1D <- eventReactive(input$plot1D,{
+        tryCatch({
 ###use calc.1Dper() from functions.R to calculate periodogram
-        calc.1Dper(Nmax.plots, periodogram.var(),per.par(),data())
+            calc.1Dper(Nmax.plots, periodogram.var(),per.par(),data())
+        },error=function(e){
+###a silent failure looks like a dead button; tell the user what went wrong
+            showNotification(paste('Periodogram calculation failed:',conditionMessage(e)),type='error',duration=NULL)
+            NULL
+        })
     })
 
     save.data <- function(li,f,format='normal'){
@@ -1128,7 +1145,11 @@ output$color <- renderUI({
     })
 
   MP.data <- eventReactive(input$data.update,{
-      per2D.data(periodogram.var2(),per.par2(),data())
+      tryCatch(per2D.data(periodogram.var2(),per.par2(),data()),
+               error=function(e){
+                   showNotification(paste('2D periodogram calculation failed:',conditionMessage(e)),type='error',duration=NULL)
+                   NULL
+               })
   })
 
     output$MP.data <- downloadHandler(
