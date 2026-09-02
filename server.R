@@ -223,7 +223,7 @@ The BFP and MLP can be compared with the Lomb-Scargle periodogram (LS), the gene
         if(is.null(input$per.type)) return()
 #        if(!is.null(data())){
         if(any(input$per.type=='BFP')){
-            choices <- if(!is.null(Ntarget()) && Ntarget()>1) 0 else c(0,100,1000,10000,100000,1000000)
+            choices <- c(0,100,1000,10000,100000,1000000)
             selectizeInput('Niter','MCMC sample size', choices=choices,selected=0,multiple=FALSE)
         }
     })

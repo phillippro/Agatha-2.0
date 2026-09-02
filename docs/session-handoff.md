@@ -53,7 +53,8 @@ Remaining engineering targets:
 - MCMC with the GP noise model.
 
 - Extend multi-set support to proxy terms.
-- Extend MCMC refinement to multi-set fits.
+- Multi-set MCMC implemented (`mcfit.multiset`); sequential multi-signal MCMC for multi-set
+  fits and single-set GP MCMC remain open.
 - Verify against section 2.6 of `paper/abfp/bkp/astro_periodogram2.pdf` if that paper tree is restored.
 
 Touched implementation points:
@@ -70,6 +71,7 @@ Touched implementation points:
 - `tests/test_gp_periodogram.R`
 - `tests/test_plots.R`
 - `tests/test_moving_periodogram.R`
+- `tests/test_multiset_mcmc.R`
 - `MP_plot.R`
 - `additional_signals.R`
 

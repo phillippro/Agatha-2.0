@@ -161,8 +161,10 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
     if(GP){
         Nmas <- rep(0,length(Nmas))
         Nars <- rep(0,length(Nars))
-        if(mcf){
-            warning('MCMC with a GP noise model is not implemented; using the maximum-likelihood fit.')
+        if(mcf && length(per.target)==1){
+###the single-set GP path samples with the celerite likelihood, which the MCMC
+###wrapper does not support; the multi-set GP MCMC works on the whitened data
+            warning('MCMC with a GP noise model is not implemented for a single data set; using the maximum-likelihood fit.')
             mcf <- FALSE
         }
     }
@@ -392,7 +394,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
 	}else{
 	     Pconv <- TRUE
 	}
-        fit <- sigfit(per=rv.ls,data=tab,SigType=SigType,basis=basis,Ncores=Ncores,mcf=(mcf & !multi.set),Niter=Niter,Pconv=Pconv)
+        fit <- sigfit(per=rv.ls,data=tab,SigType=SigType,basis=basis,Ncores=Ncores,mcf=mcf,Niter=Niter,Pconv=Pconv)
 ###update the output from periodogram
         rv.ls <- fit$per
 
@@ -420,7 +422,7 @@ calc.1Dper <- function(Nmax.plots, vars,per.par,data,Ncores=4,basis='natural'){
 ###use mcmc to update the combined model and output
         mc <- list()
         if(mcf){
-            if(Nsig.max>1){
+            if(Nsig.max>1 & !multi.set){
                 fit <- mcfit(rv.ls,data=tab[,1:3],tsim=fit$tsim0,Niter=Niter,SigType=SigType,basis=basis,ParSig=par.data,Pconv=TRUE,Ncores=Ncores)
             }
             mc <- fit$mc
@@ -826,12 +828,153 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
     list(mc=mc,llmax=llmax,lpmax=lpmax,ParSig=ParSig,out=out,par.stat=par.stat,yma=yma,yar=yar,yred=yred,ysig=ysig,ysig0=as.numeric(ysig0),ysim.red=ysim.red,ysim.sig=ysim.sig,ytrend=ytrend,yproxy=yproxy,res=res,res.sig=res.sig,popt=popt,tsim0=tsim)#ysim.all=ysim.all
 }
 
-sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE){
+mcfit.multiset <- function(per, data, set.id, tsim, Niter=1e3, SigType='kepler', Ncores=4,
+                           Ntem=NULL, tem.min=NULL, swap.interval=10, mcmc.verbose=FALSE){
+###PT-MCMC refinement of a multi-set fit: a shared signal (Keplerian or
+###circular), one offset per data set, a shared linear trend, and one jitter
+###per data set. With a GP periodogram the fixed GP covariance from the
+###periodogram fit whitens the residuals and replaces the jitters. Per-set
+###AR/MA lag terms are not refined here; the jitters absorb what they left.
+    t <- as.numeric(data[,1]); t <- t-min(t)
+    y <- as.numeric(data[,2])
+    dy <- as.numeric(data[,3])
+    set.id <- factor(set.id)
+    levs <- levels(set.id)
+    iset <- as.integer(set.id)
+    Nset <- length(levs)
+    gp <- !is.null(per$gp.R)
+    R <- per$gp.R
+    if(!gp && (any(as.integer(per$Nma)>0) || any(as.integer(per$Nar)>0))){
+        warning('The per-set AR/MA lag terms are not refined by the multi-set MCMC; the per-set jitters absorb the correlated noise.')
+    }
+    span <- max(t)-min(t)
+    sdy <- sd(y)
+    popt <- as.numeric(per$Popt[1])
+    gnames <- paste0('gamma_',make.names(levs))
+    snames <- paste0('sj_',make.names(levs))
+
+###start from the deterministic fit
+    if(SigType=='kepler'){
+        kf <- KeplerFit.multiset(per)
+        K0 <- max(as.numeric(kf$ParKep$K1),1e-3*sdy)
+        start <- c(logP1=log(as.numeric(kf$ParKep$P1)),K1=K0,
+                   e1=min(max(as.numeric(kf$ParKep$e1),1e-3),0.9),
+                   omega1=as.numeric(kf$ParKep$omega1)%%(2*pi),Mo1=as.numeric(kf$ParKep$Mo1)%%(2*pi))
+        low <- c(logP1=log(0.8*popt),K1=0,e1=0,omega1=0,Mo1=0)
+        up <- c(logP1=log(1.2*popt),K1=max(5*K0,5*sdy),e1=0.95,omega1=2*pi,Mo1=2*pi)
+        gam0 <- unlist(kf$ParKep[gnames])
+        beta0 <- if(!is.null(kf$ParKep$beta)) as.numeric(kf$ParKep$beta) else 0
+    }else{
+        po <- unlist(per$par.opt)
+        A0 <- if('A'%in%names(po)) as.numeric(po[['A']]) else 0
+        B0 <- if('B'%in%names(po)) as.numeric(po[['B']]) else 0
+        amp <- max(sqrt(A0^2+B0^2),1e-3*sdy)
+        start <- c(logP1=log(popt),A1=A0,B1=B0)
+        low <- c(logP1=log(0.8*popt),A1=-5*max(amp,sdy),B1=-5*max(amp,sdy))
+        up <- c(logP1=log(1.2*popt),A1=5*max(amp,sdy),B1=5*max(amp,sdy))
+        gam0 <- sapply(levs,function(l) mean(y[set.id==l]))
+        if('gamma_1'%in%names(po) || any(gnames%in%names(po))) gam0 <- ifelse(gnames%in%names(po),po[gnames],gam0)
+        beta0 <- if('beta'%in%names(po)) as.numeric(po[['beta']]) else 0
+    }
+    gam0 <- as.numeric(gam0); gam0[!is.finite(gam0)] <- mean(y)
+    gwid <- diff(range(y))+10*sdy
+    start <- c(start,setNames(gam0,gnames),beta=beta0)
+    low <- c(low,setNames(gam0-gwid,gnames),beta=beta0-10*sdy/max(span,1))
+    up <- c(up,setNames(gam0+gwid,gnames),beta=beta0+10*sdy/max(span,1))
+    if(!gp){
+        sj0 <- sapply(levs,function(l) median(dy[set.id==l]))
+        start <- c(start,setNames(pmax(sj0,1e-3),snames))
+        low <- c(low,setNames(rep(0,Nset),snames))
+        up <- c(up,setNames(rep(5*sdy,Nset),snames))
+    }
+    start <- pmin(pmax(start,low+1e-9),up-1e-9)
+
+###the shared-signal model and its likelihood
+    signal.at <- function(par,tt){
+        if(SigType=='kepler'){
+            multiset_kepler_curve(list(P1=exp(par[['logP1']]),K1=par[['K1']],e1=par[['e1']],
+                                       omega1=par[['omega1']],Mo1=par[['Mo1']]),tt)
+        }else{
+            par[['A1']]*cos(2*pi*tt/exp(par[['logP1']]))+par[['B1']]*sin(2*pi*tt/exp(par[['logP1']]))
+        }
+    }
+    model <- function(par) signal.at(par,t)+par[gnames][iset]+par[['beta']]*t
+    loglike <- function(par){
+        r <- y-model(par)
+        if(gp){
+            z <- base::backsolve(R,r,transpose=TRUE)
+            -0.5*sum(z^2)-sum(log(diag(R)))-length(y)/2*log(2*pi)
+        }else{
+            s2 <- dy^2+(par[snames][iset])^2
+            -0.5*sum(r^2/s2+log(2*pi*s2))
+        }
+    }
+
+###a local sampling environment so the generic PT machinery sees this model
+    par.min <- low
+    par.max <- up
+    Npar <- length(start)
+    Sd <- 2.4^2/Npar
+    tol1 <- 1e-16
+    posterior <- function(param,tem=1,bases='natural'){
+        ll <- loglike(param)
+        if(!is.finite(ll)) ll <- -1e10
+        list(loglike=ll,logprior=0,post=ll*tem)
+    }
+    env <- environment()
+    rebind <- function(f){ environment(f) <- env; f }
+    ptmcmc.proposal <- rebind(ptmcmc.proposal)
+    ptmcmc.cov <- rebind(ptmcmc.cov)
+    ptmcmc.temmin <- rebind(ptmcmc.temmin)
+    covariance.n0 <- rebind(covariance.n0)
+    covariance.rep <- rebind(covariance.rep)
+    run.pt <- rebind(run.ptmcmc)
+    cov.start <- diag((1e-3*(par.max-par.min))^2,nrow=Npar)
+
+    chains <- foreach(ncore=1:Ncores,.errorhandling='pass') %dopar% {
+        run.pt(start,cov.start,iterations=max(as.numeric(Niter),1000),bases='natural',
+               Ntem=Ntem,tem.min=tem.min,swap.interval=swap.interval,verbose=mcmc.verbose)
+    }
+    chains <- chains[sapply(chains,function(ch) is.list(ch) && !is.null(ch$out))]
+    if(length(chains)==0) stop('all multi-set MCMC chains failed')
+    mc <- do.call(rbind,lapply(chains,function(ch) ch$out))
+    if(mcmc.verbose){
+        cat('multi-set PTMCMC: ',length(chains),'chains;',nrow(mc),'samples; max Rhat:',
+            max(unlist(lapply(chains,function(ch) if(is.null(ch$Rhat)) NA else max(ch$Rhat))),na.rm=TRUE),'\n')
+    }
+###report the period linearly
+    mc[,'logP1'] <- exp(mc[,'logP1'])
+    colnames(mc)[colnames(mc)=='logP1'] <- 'P1'
+    ind.max <- which.max(mc[,'loglike'])
+    ParSig <- mc[ind.max,1:Npar]
+    pb <- ParSig
+    pb[['P1']] <- log(pb[['P1']])
+    names(pb)[names(pb)=='P1'] <- 'logP1'
+    ll <- mc[,'loglike']
+    par.stat <- sapply(1:Npar,function(i) data.distr(mc[,i],ll,plotf=FALSE))
+    colnames(par.stat) <- colnames(mc)[1:Npar]
+    popt <- as.numeric(ParSig[['P1']])
+    ysig0 <- signal.at(pb,t)
+    res <- y-model(pb)
+    if(gp){
+###remove the GP prediction so the residual is white for the plots
+        gpm <- gp_predict(t,R,per$gp$sigmaGP,per$gp$logProt,per$gp$logtauGP,res)
+        ysig0.gp <- gpm
+        res <- res-gpm
+    }
+    ysim0 <- signal.at(pb,tsim)
+    list(mc=mc,ParSig=ParSig,par.stat=par.stat,popt=popt,ysig0=as.numeric(ysig0),
+         res=as.numeric(res),ysim0=as.numeric(ysim0))
+}
+
+sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE, Niter=1e3, Ncores=4,
+                            Ntem=NULL, tem.min=NULL, swap.interval=10, mcmc.verbose=FALSE){
 ###Turn a multi-data-set periodogram into a fitted model, its residual and its
 ###phase-folded prediction. SigType selects a shared circular signal, a shared
 ###Keplerian signal or a purely stochastic (signal-free) red-noise model.
-    if(mcf){
-        warning('MCMC refinement is not implemented for multi-set periodograms; using the weighted linear multi-set fit.')
+    if(mcf && SigType=='stochastic'){
+        warning('MCMC refinement is not available for the purely stochastic multi-set model; using the maximum-likelihood fit.')
+        mcf <- FALSE
     }
     if(SigType=='stochastic' & !isTRUE(per$noise_only)){
         warning('The multi-set periodogram was not computed with a purely stochastic model; using the circular signal instead.')
@@ -840,6 +983,33 @@ sigfit.multiset <- function(per, data, t, tsim, SigType='circular', mcf=FALSE){
     if(SigType!='stochastic' & isTRUE(per$noise_only)){
         warning('The multi-set periodogram is purely stochastic; reporting the stochastic fit.')
         SigType <- 'stochastic'
+    }
+    par.stat <- NULL
+    mc <- c()
+    if(mcf){
+###PT-MCMC over the shared signal, per-set offsets, trend and per-set jitters
+        tmp <- mcfit.multiset(per=per,data=data,set.id=per$set.id,tsim=tsim,Niter=Niter,
+                              SigType=SigType,Ncores=Ncores,Ntem=Ntem,tem.min=tem.min,
+                              swap.interval=swap.interval,mcmc.verbose=mcmc.verbose)
+        popt <- tmp$popt
+        ysig0 <- tmp$ysig0
+        res <- tmp$res
+        ysim.sig <- tmp$ysim0
+        ParSig <- tmp$ParSig
+        par.stat <- tmp$par.stat
+        mc <- tmp$mc
+        per$par.opt <- as.list(ParSig)
+        per$Popt <- popt
+        per$res <- res
+        ysig <- ysig0+res
+        per$res.s <- res
+        if(is.na(popt) | popt<=0) popt <- 1e7
+        tsim1 <- tsim%%popt
+        inds <- sort(tsim1,index.return=TRUE)$ix
+        return(list(per=per,t=t%%popt,y=as.numeric(ysig),ey=data[,3],res=as.numeric(res),
+                    ysig0=as.numeric(ysig0),tsim0=tsim,ysim0=ysim.sig,
+                    tsim=tsim1[inds],ysim=ysim.sig[inds],ParSig=ParSig,
+                    par.stat=par.stat,popt=popt,mc=mc))
     }
     if(SigType=='kepler'){
         fit <- KeplerFit.multiset(per)
@@ -913,7 +1083,8 @@ sigfit <- function(per,data,SigType='circular',basis='natural',mcf=TRUE,Ncores=4
     popt <- per$Popt
     save.data <- FALSE
     if(isTRUE(per$multi_set)){
-        return(sigfit.multiset(per=per,data=data,t=t,tsim=tsim,SigType=SigType,mcf=mcf))
+        return(sigfit.multiset(per=per,data=data,t=t,tsim=tsim,SigType=SigType,mcf=mcf,Niter=Niter,Ncores=Ncores,
+                               Ntem=Ntem,tem.min=tem.min,swap.interval=swap.interval,mcmc.verbose=mcmc.verbose))
     }
 #    }else{
         if(SigType=='circular'){

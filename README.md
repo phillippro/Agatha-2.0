@@ -322,7 +322,9 @@ and is no longer used. The dense solve costs `O(N^3)` per likelihood evaluation,
 immediate for a few hundred points; for several thousand points prefer `ARMA` or a coarser
 `ofac`.
 
-MCMC sampling is not yet available with the GP noise model; the maximum-likelihood fit is
+With several data sets and the GP noise model, the MCMC samples on the GP-whitened data
+(the covariance from the periodogram fit is held fixed, and there are no per-set jitters).
+For a single data set the GP MCMC is not implemented and the maximum-likelihood fit is
 returned with a warning.
 
 ## 6. Figures
@@ -378,6 +380,14 @@ The behaviour is controlled by the arguments of `mcfit()` and `sigfit()`:
 
 `run.ptmcmc()` also accepts `adapt.ladder`, `adapt.window`, `adapt.nu`, `adapt.t0`,
 `max.extend` and `Rhat.max` for finer control.
+
+MCMC refinement also works with several data sets selected (`mcfit.multiset`): the sampled
+model is the shared signal (Keplerian or circular), one offset per data set, a shared linear
+trend, and one jitter per data set, started from the Fourier-seeded deterministic fit. The
+per-set AR/MA lag terms are not refined - the jitters absorb what they leave - and with the
+GP noise model the fixed covariance whitens the data instead of the jitters. The purely
+stochastic signal type has no MCMC. The parameter table reports mode, percentiles and
+standard deviation per parameter, as for a single data set.
 
 ## 8. Roadmap
 

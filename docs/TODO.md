@@ -74,13 +74,21 @@ periodogram types:
 1. The 2D tab has the ARMA/GP noise-model choice with fixed or free GP time scales.
 1. Added `tests/test_moving_periodogram.R`.
 
+Completed for multi-set MCMC:
+
+1. `mcfit.multiset()`: PT-MCMC over the shared signal, per-set offsets, shared trend and
+   per-set jitters (GP noise: fixed whitening covariance, no jitters), reusing the generic
+   `run.ptmcmc` machinery through a local sampling environment. Wired into `sigfit.multiset`
+   and `calc.1Dper`; the MCMC-length control is no longer hidden for multiple data sets.
+1. Added `tests/test_multiset_mcmc.R` (two sets Keplerian, five sets circular with a 3-point
+   set, GP-whitened MCMC).
+
 Remaining follow-up work:
+
 
 1. MCMC with the GP noise model (the `mcfit` data wrapper is ARMA-only).
 
 1. Extend the multi-set model to proxy terms.
-1. Extend MCMC refinement to multi-set fits; `sigfit.multiset()` still warns and returns the
-   weighted linear fit when MCMC is requested.
 1. Add a public bundled-data demo with documented expected output.
 1. Verify against the unavailable draft model in `paper/abfp/bkp/astro_periodogram2.pdf` if that paper tree is restored.
 
