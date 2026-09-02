@@ -1431,7 +1431,9 @@ ptmcmc.rhat <- function(mcmc,Nsub=5){
 run.ptmcmc <- function(startvalue,cov.start,iterations,n0=NULL,verbose=FALSE,bases='natural',
                        tems=NULL,Ntem=NULL,tem.min=NULL,swap.interval=10,nburn=NULL,
                        sd.ini=0.05,acc.target=0.234,adapt.ladder=TRUE,adapt.window=100,
-                       adapt.nu=100,adapt.t0=1000,max.extend=3,Rhat.max=1.1){
+                       adapt.nu=100,adapt.t0=1000,max.extend=3,Rhat.max=1.1,progress=NULL){
+###progress: optional callback(frac.done.increment, detail) for a UI progress
+###bar; only useful when the sampler runs in the interface's own process
 ###Each replica is an adaptive Metropolis chain sampling posterior(.,tem) with its
 ###own proposal covariance and step size. Every swap.interval iterations
 ###neighbouring replicas propose to exchange states, which lets the cold chain
@@ -1554,6 +1556,9 @@ run.ptmcmc <- function(startvalue,cov.start,iterations,n0=NULL,verbose=FALSE,bas
             chain[ib,] <- par.cur[1,]
             logpost[ib] <- lp.cur[1]+ll.cur[1]
             loglike[ib] <- ll.cur[1]
+            if(!is.null(progress) && i%%500==0){
+                try(progress(500/iterations,paste0('iteration ',i)),silent=TRUE)
+            }
             if(verbose & (i%%1000==0)){
                 cat('PTMCMC i=',i,'; cold acceptance:',round(100*naccept[1]/i,1),
                     '%; swap acceptance:',paste(round(100*nswap.acc/pmax(nswap,1)),collapse=','),

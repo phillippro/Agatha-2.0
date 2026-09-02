@@ -697,6 +697,11 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
 #    mcmc <- foreach(ncore=1:Ncores,.combine='rbind') %dopar% {
     Niter0 <- Niter
     per.prim <- c()
+###a forked chain cannot update the interface, so the dialog itself is the
+###status indicator; with a single core the cold chain reports its iterations
+    prog <- if(Ncores==1) function(k,detail='') incProgress(k,detail=detail) else NULL
+    withProgress(message=paste0('Running PT-MCMC (',Ncores,' chain',if(Ncores>1) 's' else '',' x ',
+                                max(as.numeric(Niter),1000),' iterations)'), value=0.05, {
     mcmc <- foreach(ncore=1:Ncores,.errorhandling = 'pass') %dopar% {
         if(mcmc.method=='PT'){
 ###parallel tempering: the hot replicas explore the aliases of the periodogram
@@ -705,7 +710,7 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
 ###during burn-in, and the chain is extended until the cold chain converges
             tmp <- run.ptmcmc(startvalue,cov.start,iterations=max(as.numeric(Niter),1000),
                               bases=rep(basis,10),Ntem=Ntem,tem.min=tem.min,
-                              swap.interval=swap.interval,verbose=mcmc.verbose)
+                              swap.interval=swap.interval,verbose=mcmc.verbose,progress=prog)
             if(mcmc.verbose){
                 cat('PTMCMC tem.min:',format(tmp$tem.min,digit=2),if(tmp$auto.tem) '(automatic)' else '(fixed)',
                     '; rungs:',tmp$Ntem,'; iterations:',tmp$iterations,'; extended:',tmp$extended,'blocks\n')
@@ -725,6 +730,7 @@ mcfit <- function(per,data,tsim,Niter=1e3,SigType='kepler',basis='natural',ParSi
         }
         tmp$out
     }
+    })
 
 #    mcmc  <- list()
 #    mcmc[[1]] <- tmp$out
@@ -942,12 +948,22 @@ mcfit.multiset <- function(per, data, set.id, tsim, Niter=1e3, SigType='kepler',
     run.pt <- rebind(run.ptmcmc)
     cov.start <- diag((1e-3*(par.max-par.min))^2,nrow=Npar)
 
+###a forked chain cannot update the interface, so the dialog itself is the
+###status indicator; with a single core the cold chain reports its iterations
+    prog <- if(Ncores==1) function(k,detail='') incProgress(k,detail=detail) else NULL
+    withProgress(message=paste0('Running multi-set PT-MCMC (',Ncores,' chain',if(Ncores>1) 's' else '',' x ',
+                                max(as.numeric(Niter),1000),' iterations)'), value=0.05, {
     chains <- foreach(ncore=1:Ncores,.errorhandling='pass') %dopar% {
         run.pt(start,cov.start,iterations=max(as.numeric(Niter),1000),bases='natural',
-               Ntem=Ntem,tem.min=tem.min,swap.interval=swap.interval,verbose=mcmc.verbose)
+               Ntem=Ntem,tem.min=tem.min,swap.interval=swap.interval,verbose=mcmc.verbose,progress=prog)
     }
-    chains <- chains[sapply(chains,function(ch) is.list(ch) && !is.null(ch$out))]
-    if(length(chains)==0) stop('all multi-set MCMC chains failed')
+    })
+    bad <- sapply(chains,function(ch) !(is.list(ch) && !is.null(ch$out)))
+    if(all(bad)){
+        msg <- tryCatch(conditionMessage(chains[[1]]),error=function(e) 'unknown error')
+        stop('all multi-set MCMC chains failed: ',msg)
+    }
+    chains <- chains[!bad]
     mc <- do.call(rbind,lapply(chains,function(ch) ch$out))
     if(mcmc.verbose){
         cat('multi-set PTMCMC: ',length(chains),'chains;',nrow(mc),'samples; max Rhat:',
