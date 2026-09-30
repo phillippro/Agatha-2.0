@@ -460,6 +460,9 @@ The ladder is set automatically, following Vousden, Farr & Mandel (2016, MNRAS 4
 
 The behaviour is controlled by the arguments of `mcfit()` and `sigfit()`:
 
+- `Ncores` - number of independent PT-MCMC runs, one per core (default 4, changed from 8);
+  the cold chains of all runs are combined into the reported posterior, and the same value
+  registers the `doMC` workers of `calc.1Dper()`.
 - `mcmc.method` - `'PT'` (default) for parallel tempering, or anything else to fall back to
   the older sequential adaptive-tempering scheme in `hot_chain.R`.
 - `Ntem`, `tem.min` - `NULL` (default) for the automatic choices above, or fixed values.

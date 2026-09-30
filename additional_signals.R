@@ -12,7 +12,7 @@ leg.pos <- 'topright'
 ###ln(BF) compares the joint models (BIC estimate from the maximum likelihood of
 ###the MCMC); with several data sets each signal has its own MCMC in the
 ###residual and the ln(BF) comes from the residual periodogram
-joint <- mcf && !multi.set
+joint <- mcf1 && !multi.set
 if(!exists('lnBF.min')) lnBF.min <- 5
 for(jj in 2:Nsig.max){
     if(!is.null(model.comp) && !all(model.comp$accepted)) break
@@ -87,7 +87,7 @@ for(jj in 2:Nsig.max){
     lnBF.per <- if(per.type.seq=='BFP') suppressWarnings(max(rv.ls$power,na.rm=TRUE)) else NA
     if(!is.finite(lnBF.per)) lnBF.per <- NA
 ###modify the periodogram output for Keplerian fit
-    tmp <- sigfit(per=rv.ls,data=cbind(t,rr,dy),SigType=SigType,basis=basis,mcf=mcf,Niter=Niter,Ncores=Ncores,Pconv=Pconv,
+    tmp <- sigfit(per=rv.ls,data=cbind(t,rr,dy),SigType=SigType1,basis=basis,mcf=mcf1,Niter=Niter,Ncores=Ncores,Pconv=Pconv,
                   e.prior=if(exists('e.prior')) e.prior else NULL)
     rv.ls <- tmp$per
 #    if(!progress) phase.plot(tmp,fold=fold)

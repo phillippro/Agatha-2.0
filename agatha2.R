@@ -37,7 +37,7 @@ save.data <- TRUE
 targets <- gsub('_.+','',fs)
 stars <- gsub('\\..+','',fs)
 fs <- paste0(dir.in,fs)
-Ncores <- 1
+Ncores <- 4
 Nsamp <- 1
 Pmin <- 1.1
 Pmax <- 1e5

@@ -2889,6 +2889,8 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
 #    pars <- unlist(c(omega=NA,phi=NA,Nma=vars0$Nma,Nar=vars0$Nar,Indices=Indices,data=data[1,],type='noise',par.low=vars0$par.low,par.up=vars0$par.up,start=vars0$start,noise.only=noise.only,GP=vars0$GP,gp.par=vars0$gp.par,Nrep=1))
     logL0 <- tmp$logL
     lnl0 <- tmp$lnls
+###the noise-only optimum, used to restart a periodic fit that falls below the reference
+    noise.par0 <- tmp$par0
     if(FALSE){
         ind <- match(names(vars1$start),names(tmp$par))
         vars1$start <- tmp$par[ind]
@@ -2945,6 +2947,13 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
                         vars1 <- c(vars1,tmp)
                         opt <- sopt(omega=omega,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=vars1$start,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=Nrep,Nh=Nh)
                     }
+                    if(!noise.only && isTRUE(opt$logL<logL0)){
+                    ###the periodic model nests the noise-only one, so a lower likelihood means the warm start
+                    ###(previous frequency) converged to a poor local optimum: retry from the noise-only optimum
+                        st <- vars1$start; nm <- intersect(names(st),names(noise.par0)); st[nm] <- noise.par0[nm]
+                        opt2 <- sopt(omega=omega,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=st,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=max(Nrep,2),Nh=Nh)
+                        if(opt2$logL>opt$logL) opt <- opt2
+                    }
                     if(renew){
                         vars1$start <- opt$par0
                     }
@@ -2983,6 +2992,13 @@ BFP <- function(t, y, dy, Nma=0, Nar=0,Indices=NULL,ofac=1, fmax=NULL,fmin=NA,ts
                     tmp <- local.notation(t,y,dy,Indices,NI,omega,phi)
                     vars1 <- c(vars1,tmp)
                     opt <- sopt(omega=omega,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=vars1$start,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=Nrep,Nh=Nh)
+                }
+                if(!noise.only && isTRUE(opt$logL<logL0)){
+                ###the periodic model nests the noise-only one, so a lower likelihood means the warm start
+                ###(previous frequency) converged to a poor local optimum: retry from the noise-only optimum
+                    st <- vars1$start; nm <- intersect(names(st),names(noise.par0)); st[nm] <- noise.par0[nm]
+                    opt2 <- sopt(omega=omega,phi=phi,Nma=Nma,Nar=Nar,Indices=Indices,data=data,type='period',par.low=vars1$par.low,par.up=vars1$par.up,start=st,noise.only=noise.only,GP=GP,gp.par=gp.par,Nrep=max(Nrep,2),Nh=Nh)
+                    if(opt2$logL>opt$logL) opt <- opt2
                 }
                 if(renew){
                     vars1$start <- opt$par0
